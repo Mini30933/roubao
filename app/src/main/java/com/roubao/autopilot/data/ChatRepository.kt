@@ -12,7 +12,9 @@ import java.util.UUID
 data class ChatMessage(
     val role: String,
     val content: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** 用户随消息发送的图片：应用私有目录 chat_images/ 下的文件名，无图片为 null */
+    val image: String? = null
 )
 
 /**
@@ -75,7 +77,8 @@ class ChatRepository(context: Context) {
                     ChatMessage(
                         role = obj.optString("role", "user"),
                         content = obj.optString("content", ""),
-                        timestamp = obj.optLong("ts", 0L)
+                        timestamp = obj.optLong("ts", 0L),
+                        image = obj.optString("img").ifBlank { null }
                     )
                 )
             }
@@ -98,7 +101,8 @@ class ChatRepository(context: Context) {
                     ChatMessage(
                         role = m.optString("role", "user"),
                         content = m.optString("content", ""),
-                        timestamp = m.optLong("ts", 0L)
+                        timestamp = m.optLong("ts", 0L),
+                        image = m.optString("img").ifBlank { null }
                     )
                 )
             }
@@ -126,6 +130,7 @@ class ChatRepository(context: Context) {
                     put("role", msg.role)
                     put("content", msg.content)
                     put("ts", msg.timestamp)
+                    msg.image?.let { put("img", it) }
                 })
             }
             array.put(JSONObject().apply {

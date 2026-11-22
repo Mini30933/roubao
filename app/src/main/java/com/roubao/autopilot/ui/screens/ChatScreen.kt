@@ -51,6 +51,19 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import java.io.File
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val CONTROL_MARKER = "@@CONTROL@@"
 
@@ -118,8 +131,16 @@ var messages by remember { mutableStateOf(currentSession.messages)}
 var summary by remember { mutableStateOf(currentSession.summary)}
 var inputText by remember { mutableStateOf("")}
 var isSending by remember { mutableStateOf(false)}
+var pendingImage by remember { mutableStateOf<String?>(null)}
 val listState = rememberLazyListState()
 val scope = rememberCoroutineScope()
+val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+if (uri != null) {
+scope.launch {
+saveChatImage(context, uri)?.let { pendingImage = it }
+}
+}
+}
 val keyboardController = LocalSoftwareKeyboardController.current
 val focusManager = LocalFocusManager.current
 val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -133,7 +154,8 @@ var title = session.title
 if (title == "新对话") {
 val firstUser = messages.firstOrNull { it.role == "user"}
 if (firstUser!= null) {
-title = firstUser.content.replace("\n", " ").take(18)
+val t = firstUser.content.replace("\n", " ").take(18)
+title = if (t.isBlank() && firstUser.image != null) "图片对话" else t
 }
 }
 session.copy(
@@ -242,7 +264,22 @@ put("content", system)
 for (msg in messages) {
 array.put(JSONObject().apply {
 put("role", msg.role)
+val imgName = msg.image
+val dataUrl = if (imgName != null && msg.role == "user") chatImageDataUrl(context, imgName) else null
+if (dataUrl != null) {
+put("content", JSONArray().apply {
+put(JSONObject().apply {
+put("type", "text")
+put("text", msg.content.ifBlank { "看看这张图" })
+})
+put(JSONObject().apply {
+put("type", "image_url")
+put("image_url", JSONObject().apply { put("url", dataUrl) })
+})
+})
+} else {
 put("content", msg.content)
+}
 })
 }
 return array
@@ -343,13 +380,15 @@ persist()
 
 fun send() {
 val text = inputText.trim()
-if (text.isEmpty() || isSending) {
+val img = pendingImage
+if ((text.isEmpty() && img == null) || isSending) {
 return
 }
 inputText = ""
+pendingImage = null
 keyboardController?.hide()
 focusManager.clearFocus()
-messages = messages + ChatMessage("user", text)
+messages = messages + ChatMessage("user", text, image = img)
 persist()
 if (settings.apiKey.isBlank() && settings.currentProviderId!= "mai_ui") {
 messages = messages + ChatMessage("system", "（还没配置 API：请先到「设置」里填好 API 地址和 Key）")
@@ -561,6 +600,40 @@ modifier = Modifier
 .background(colors.backgroundInput)
 .padding(horizontal = 16.dp, vertical = 12.dp)
 ) {
+if (pendingImage != null) {
+val thumb = remember(pendingImage) { chatImageBitmap(context, pendingImage!!) }
+Row(verticalAlignment = Alignment.CenterVertically) {
+if (thumb != null) {
+Image(
+bitmap = thumb,
+contentDescription = "待发送图片",
+contentScale = ContentScale.Crop,
+modifier = Modifier
+.size(56.dp)
+.clip(RoundedCornerShape(10.dp))
+)
+}
+Spacer(modifier = Modifier.width(8.dp))
+Text(
+text = "已选一张图片，发送后对方就能看到",
+fontSize = 12.sp,
+color = colors.textHint,
+modifier = Modifier.weight(1f)
+)
+Icon(
+imageVector = Icons.Default.Close,
+contentDescription = "移除图片",
+tint = colors.textHint,
+modifier = Modifier
+.size(20.dp)
+.clickable {
+pendingImage?.let { deleteChatImage(context, it) }
+pendingImage = null
+}
+)
+}
+Spacer(modifier = Modifier.height(10.dp))
+}
 BasicTextField(
 value = inputText,
 onValueChange = { inputText = it},
@@ -615,20 +688,32 @@ color = colors.textSecondary
 Spacer(modifier = Modifier.weight(1f))
 
 IconButton(
+onClick = { imagePicker.launch("image/*") },
+modifier = Modifier.size(40.dp)
+) {
+Icon(
+imageVector = Icons.Default.Add,
+contentDescription = "发送图片",
+tint = colors.textSecondary,
+modifier = Modifier.size(24.dp)
+)
+}
+
+IconButton(
 onClick = { send()},
-enabled = inputText.isNotBlank() &&!isSending,
+enabled = (inputText.isNotBlank() || pendingImage != null) &&!isSending,
 modifier = Modifier
 .size(40.dp)
 .clip(CircleShape)
 .background(
-if (inputText.isNotBlank() &&!isSending) colors.primary
+if ((inputText.isNotBlank() || pendingImage != null) &&!isSending) colors.primary
 else colors.backgroundCard
 )
 ) {
 Icon(
 imageVector = Icons.Default.KeyboardArrowUp,
 contentDescription = "发送",
-tint = if (inputText.isNotBlank() &&!isSending) Color.White else colors.textHint,
+tint = if ((inputText.isNotBlank() || pendingImage != null) &&!isSending) Color.White else colors.textHint,
 modifier = Modifier.size(20.dp)
 )
 }
@@ -1051,9 +1136,60 @@ Text("取消", color = colors.textSecondary)
 }
 }
 
+/** 把用户选的图片复制进应用私有目录（最长边压到 1280，存 JPEG），返回文件名；失败返回 null */
+private suspend fun saveChatImage(context: android.content.Context, uri: Uri): String? =
+withContext(Dispatchers.IO) {
+try {
+val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+?: return@withContext null
+val scale = minOf(1f, 1280f / maxOf(bmp.width, bmp.height))
+val out = if (scale < 1f) {
+Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true)
+} else {
+bmp
+}
+val dir = File(context.filesDir, "chat_images").apply { mkdirs() }
+val name = UUID.randomUUID().toString() + ".jpg"
+File(dir, name).outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+name
+} catch (e: Exception) {
+null
+}
+}
+
+/** 读取聊天图片为位图（气泡/预览展示用） */
+private fun chatImageBitmap(context: android.content.Context, name: String) =
+try {
+val f = File(context.filesDir, "chat_images/$name")
+if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+} catch (e: Exception) {
+null
+}
+
+/** 把聊天图片编码成 data URL，发给视觉模型用 */
+private fun chatImageDataUrl(context: android.content.Context, name: String): String? =
+try {
+val f = File(context.filesDir, "chat_images/$name")
+if (!f.exists()) {
+null
+} else {
+"data:image/jpeg;base64," + Base64.encodeToString(f.readBytes(), Base64.NO_WRAP)
+}
+} catch (e: Exception) {
+null
+}
+
+private fun deleteChatImage(context: android.content.Context, name: String) {
+try {
+File(context.filesDir, "chat_images/$name").delete()
+} catch (e: Exception) {
+}
+}
+
 @Composable
 private fun ChatBubble(msg: ChatMessage) {
 val colors = BaoziTheme.colors
+val context = LocalContext.current
 when (msg.role) {
 "user" -> {
 // 用户消息：浅灰蓝气泡（DeepSeek 式）
@@ -1066,12 +1202,32 @@ shape = RoundedCornerShape(18.dp),
 color = colors.backgroundInput,
 modifier = Modifier.widthIn(max = 300.dp)
 ) {
+Column {
+val imgName = msg.image
+if (imgName != null) {
+val bmp = remember(imgName) { chatImageBitmap(context, imgName) }
+if (bmp != null) {
+Image(
+bitmap = bmp,
+contentDescription = "图片",
+contentScale = ContentScale.Crop,
+modifier = Modifier
+.padding(start = 6.dp, top = 6.dp, end = 6.dp)
+.widthIn(max = 288.dp)
+.height(190.dp)
+.clip(RoundedCornerShape(12.dp))
+)
+}
+}
+if (msg.content.isNotBlank()) {
 Text(
 text = msg.content,
 fontSize = 15.sp,
 color = colors.textPrimary,
 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
 )
+}
+}
 }
 }
 }
