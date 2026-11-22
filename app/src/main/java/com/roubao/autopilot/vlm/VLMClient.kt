@@ -109,6 +109,62 @@ class VLMClient(
                 Result.failure(e)
             }
         }
+
+    /**
+     * 读取各模型的上下文长度：请求同一个 /models 接口，
+     * 少数平台（如 OpenRouter）会在每个模型条目里带 context_length 等字段，读到多少算多少。
+     */
+    suspend fun fetchModelContexts(baseUrl: String, apiKey: String): Result<Map<String, Int>> = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) {
+            return@withContext Result.failure(Exception("Base URL 不能为空"))
+        }
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val cleanBaseUrl = normalizeUrl(baseUrl.removeSuffix("/chat/completions"))
+        val request = try {
+            Request.Builder()
+                .url("$cleanBaseUrl/models")
+                .apply {
+                    if (apiKey.isNotBlank()) {
+                        addHeader("Authorization", "Bearer $apiKey")
+                    }
+                }
+                .get()
+                .build()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(Exception("Base URL 格式无效: ${e.message}"))
+        }
+        try {
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    val json = JSONObject(responseBody)
+                    val data = json.optJSONArray("data") ?: JSONArray()
+                    val contexts = mutableMapOf<String, Int>()
+                    val fields = listOf("context_length", "context_window", "max_context_length", "max_model_len", "max_input_tokens")
+                    for (i in 0 until data.length()) {
+                        val item = data.optJSONObject(i) ?: continue
+                        val id = item.optString("id", "").trim()
+                        if (id.isEmpty()) continue
+                        for (f in fields) {
+                            val v = item.optInt(f, 0)
+                            if (v > 0) {
+                                contexts[id] = v
+                                break
+                            }
+                        }
+                    }
+                    Result.success(contexts)
+                } else {
+                    Result.failure(Exception("HTTP ${response.code}: $responseBody"))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
     }
 
     /**

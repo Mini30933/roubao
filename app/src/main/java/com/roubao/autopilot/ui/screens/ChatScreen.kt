@@ -45,6 +45,7 @@ import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.data.ChatMessage
 import com.roubao.autopilot.data.ChatRepository
 import com.roubao.autopilot.data.ChatSession
+import com.roubao.autopilot.data.contextTokensFor
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.vlm.VLMClient
 import kotlinx.coroutines.launch
@@ -297,18 +298,37 @@ put("content", msg.content)
 return array
 }
 
-// 当前会真正发给模型的上下文大小：摘要 + 未被摘要覆盖的消息
-fun contextChars(): Int {
+// 估算一段文本的 token 数（粗略：中文约 1 字 1 token，英文约 4 字符 1 token，偏保守）
+fun estimateTokens(text: String): Int {
+var t = 0.0
+for (c in text) {
+t += when {
+c.code < 128 -> 0.25
+c in '\u4E00'..'\u9FFF' || c in '\u3400'..'\u4DBF' || c in '\uF900'..'\uFAFF' -> 1.0
+else -> 0.5
+}
+}
+return t.toInt() + 1
+}
+
+fun formatTokens(n: Int): String = when {
+n >= 1000000 -> "${n / 1000000}M"
+n >= 1000 -> "${n / 1000}K"
+else -> n.toString()
+}
+
+// 当前会真正发给模型的上下文大小（tokens）：摘要 + 未被摘要覆盖的消息
+fun contextTokens(): Int {
 val start = coveredCount.coerceIn(0, messages.size)
-return summary.length + messages.subList(start, messages.size).sumOf { it.content.length}
+return estimateTokens(summary) + messages.subList(start, messages.size).sumOf { estimateTokens(it.content)}
 }
 
 fun contextPercent(): Int {
-val limit = settings.modelContextLength
+val limit = settings.contextTokensFor(settings.model)
 if (limit <= 0) {
 return 0
 }
-return (contextChars() * 100L / limit).toInt()
+return (contextTokens() * 100L / limit).toInt()
 }
 
 // 是否已达到压缩触发线（且确实有足够多的旧消息可压）
@@ -320,11 +340,26 @@ val start = coveredCount.coerceIn(0, messages.size)
 if (messages.size - start < 4) {
 return false
 }
-val threshold = settings.modelContextLength * settings.compressionTriggerPercent / 100
-return contextChars() >= threshold
+val limit = settings.contextTokensFor(settings.model)
+val threshold = limit * settings.compressionTriggerPercent / 100
+return contextTokens() >= threshold
 }
 
-// 用户点「压缩对话」后执行：较早的消息总结成摘要，原文保留在界面上，只是不再发给模型
+// 把一段对话记录用指定模型压成摘要（单次请求，调用方保证内容装得下）
+suspend fun summarizeOnce(client: VLMClient, text: String, hint: String): String? {
+val prompt = "你是一个对话记忆压缩助手。请把下面这段对话记录压缩成简洁摘要，要求：" +
+"保留角色与用户的关系进展、共同经历的重要事件、用户的偏好与习惯、未完成的话题与约定；" +
+"删掉琐碎的闲聊细节；用条目式短句输出，不超过原文的三分之一。只输出摘要正文，不要解释。$hint\n\n对话记录：\n$text"
+return client.chatCompletion(
+JSONArray().put(JSONObject().apply {
+put("role", "user")
+put("content", prompt)
+}),
+temperature = 0.3
+).getOrNull()?.trim()?.takeIf { it.isNotBlank()}
+}
+
+// 用户点「压缩对话」后执行：分段压缩——旧消息切成小块逐块摘要再合并，多长都能压；原文保留在界面上
 fun doCompress() {
 if (compressing) {
 return
@@ -333,22 +368,26 @@ scope.launch {
 compressing = true
 compressNote = null
 try {
+val compressModel = settings.compressionModel.ifBlank { settings.model}
 val client = VLMClient(
 apiKey = settings.apiKey,
 baseUrl = settings.baseUrl.ifBlank { "https://dashscope.aliyuncs.com/compatible-mode/v1"},
-model = settings.compressionModel.ifBlank { settings.model.ifBlank { "qwen3-vl-plus"}}
+model = compressModel.ifBlank { "qwen3-vl-plus"}
 )
+val limit = settings.contextTokensFor(compressModel)
+val chunkBudget = (limit * 0.5).toInt().coerceAtLeast(4000)
 val start = coveredCount.coerceIn(0, messages.size)
 val active = messages.subList(start, messages.size)
-val total = active.sumOf { it.content.length}
-val keepTarget = total * settings.compressionKeepPercent / 100
+val activeTokens = active.sumOf { estimateTokens(it.content)}
+// 保留尾巴：最新 keepPercent% 的原文，但不超过上下文的一半
+val keepTarget = minOf(activeTokens * settings.compressionKeepPercent / 100, limit / 2)
 var acc = 0
 var keepFrom = messages.size
 for (i in messages.indices.reversed()) {
 if (i < start) {
 break
 }
-acc += messages[i].content.length
+acc += estimateTokens(messages[i].content)
 keepFrom = i
 if (acc >= keepTarget) {
 break
@@ -357,41 +396,90 @@ break
 if (keepFrom <= start) {
 compressBypass = true
 compressNote = "最新几条消息本身就很长，没法再压缩了，可以继续发送"
-} else {
-val oldText = buildString {
-if (summary.isNotBlank()) {
-append("\n")
-append(summary)
-append("\n\n")
+return@launch
 }
-append(messages.subList(start, keepFrom).joinToString("\n") { msg ->
+val oldCoveredTokens = estimateTokens(summary) +
+messages.subList(start, keepFrom).sumOf { estimateTokens(it.content)}
+// 旧消息逐条渲染成文本行，再按 chunkBudget 切块（按整条消息切；单条超限的按长度硬切）
+fun lineOf(msg: ChatMessage): String {
 val who = when (msg.role) {
 "user" -> "用户"
 "assistant" -> "角色"
 else -> "注记"
 }
-"$who：${msg.content}"
-})
+return "$who：${msg.content}"
 }
-val prompt = "你是一个对话记忆压缩助手。请把下面这段对话记录压缩成简洁摘要，要求：" +
-"保留角色与用户的关系进展、共同经历的重要事件、用户的偏好与习惯、未完成的话题与约定；" +
-"删掉琐碎的闲聊细节；用条目式短句输出，不超过原文的三分之一。只输出摘要正文，不要解释。\n\n对话记录：\n$oldText"
-val digest = client.chatCompletion(
-JSONArray().put(JSONObject().apply {
-put("role", "user")
-put("content", prompt)
-}),
-temperature = 0.3
-).getOrNull()?.trim()
-if (!digest.isNullOrBlank() && digest.length < oldText.length) {
-summary = digest
+val chunks = mutableListOf<String>()
+val sb = StringBuilder()
+var sbTokens = 0
+fun flush() {
+if (sb.isNotEmpty()) {
+chunks.add(sb.toString())
+sb.clear()
+sbTokens = 0
+}
+}
+for (msg in messages.subList(start, keepFrom)) {
+val line = lineOf(msg)
+val lt = estimateTokens(line)
+if (lt > chunkBudget) {
+flush()
+var rest = line
+while (rest.isNotEmpty()) {
+val piece = rest.take(chunkBudget * 2)
+chunks.add(piece)
+rest = rest.drop(piece.length)
+}
+continue
+}
+if (sbTokens + lt > chunkBudget) {
+flush()
+}
+if (sb.isNotEmpty()) {
+sb.append("\n")
+}
+sb.append(line)
+sbTokens += lt
+}
+flush()
+if (chunks.isEmpty()) {
+compressNote = "没有可压缩的内容"
+return@launch
+}
+// 逐块摘要（旧摘要作为第一段一起合并）
+val digests = mutableListOf<String>()
+if (summary.isNotBlank()) {
+digests.add(summary)
+}
+for ((idx, chunk) in chunks.withIndex()) {
+compressNote = "正在压缩第 ${idx + 1}/${chunks.size} 段…"
+val d = summarizeOnce(client, chunk, "")
+if (d == null) {
+compressNote = "压缩失败：第 ${idx + 1} 段没有拿到摘要，请重试"
+return@launch
+}
+digests.add(d)
+}
+// 合并摘要；合并后还是太长就再摘要一轮（摘要的摘要）
+var merged = digests.joinToString("\n")
+var rounds = 0
+while (estimateTokens(merged) > chunkBudget && rounds < 4) {
+rounds++
+compressNote = "正在合并摘要（第 $rounds 轮）…"
+val d = summarizeOnce(client, merged, "这是多段摘要的合并稿，请再浓缩成一份连贯的摘要。")
+if (d == null) {
+break
+}
+merged = d
+}
+if (merged.isBlank() || estimateTokens(merged) >= oldCoveredTokens) {
+compressNote = "压缩失败：摘要没有变短，请重试"
+return@launch
+}
+summary = merged
 coveredCount = keepFrom
 persist()
-compressNote = "✓ 已压缩：较早的对话已总结成摘要，原文仍可在本页往上翻看"
-} else {
-compressNote = "压缩失败，请重试（模型没有返回有效摘要）"
-}
-}
+compressNote = "✓ 已压缩完成（分 ${chunks.size} 段处理）：较早的对话已总结成摘要，原文仍可在本页往上翻看"
 } catch (e: Exception) {
 compressNote = "压缩失败：${e.message}"
 } finally {
@@ -672,7 +760,7 @@ modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
 verticalAlignment = Alignment.CenterVertically
 ) {
 Text(
-text = compressNote ?: "对话已用约 ${contextPercent()}% 的上下文（上限约 ${settings.modelContextLength} 字），继续发送前需要压缩一次：较早的对话会总结成摘要，原文仍可在本页翻看。",
+text = compressNote ?: "对话已用约 ${contextPercent()}% 的上下文（上限约 ${formatTokens(settings.contextTokensFor(settings.model))} tokens），继续发送前需要压缩一次：较早的对话会总结成摘要，原文仍可在本页翻看。",
 fontSize = 13.sp,
 color = colors.textSecondary,
 modifier = Modifier.weight(1f)

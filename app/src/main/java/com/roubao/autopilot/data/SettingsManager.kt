@@ -103,7 +103,8 @@ data class AppSettings(
     val compressionModel: String = "",  // 聊天压缩用的模型（为空时跟随对话模型）
     val compressionTriggerPercent: Int = 80,  // 对话达到模型上下文的百分之多少时提示压缩
     val compressionKeepPercent: Int = 10,  // 压缩时保留最新百分之多少的原文
-    val modelContextLength: Int = 128000  // 模型上下文长度（字），压缩触发百分比的分母
+    val modelContextLength: Int = 0,  // 手动指定的模型上下文长度（tokens），0 = 自动识别
+    val modelContexts: Map<String, Int> = emptyMap()  // 从平台 /models 接口读到的各模型上下文长度（tokens）
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -253,7 +254,8 @@ class SettingsManager(context: Context) {
             compressionModel = prefs.getString("compression_model", "") ?: "",
             compressionTriggerPercent = prefs.getInt("compression_trigger_percent", 80),
             compressionKeepPercent = prefs.getInt("compression_keep_percent", 10),
-            modelContextLength = prefs.getInt("model_context_length", 128000)
+            modelContextLength = prefs.getInt("model_context_length", 0),
+            modelContexts = parseModelContexts(prefs.getString("model_contexts_json", null))
         )
     }
 
@@ -416,6 +418,18 @@ class SettingsManager(context: Context) {
         _settings.value = _settings.value.copy(modelContextLength = length)
     }
 
+    /** 合并保存从 /models 接口读到的各模型上下文长度 */
+    fun updateModelContexts(contexts: Map<String, Int>) {
+        if (contexts.isEmpty()) return
+        val merged = _settings.value.modelContexts + contexts
+        val obj = org.json.JSONObject()
+        for ((k, v) in merged) {
+            obj.put(k, v)
+        }
+        prefs.edit().putString("model_contexts_json", obj.toString()).apply()
+        _settings.value = _settings.value.copy(modelContexts = merged)
+    }
+
     /**
      * 追加一条长期记忆（任务结束后调用）。
      * 攒到 8000 字即触发模型压缩（任务开始时执行：最新 10% 留原文，其余压成摘要）；
@@ -451,5 +465,64 @@ class SettingsManager(context: Context) {
     fun updateLongTermMemory(text: String) {
         prefs.edit().putString("long_term_memory", text).apply()
         _settings.value = _settings.value.copy(longTermMemory = text)
+    }
+}
+
+private fun parseModelContexts(json: String?): Map<String, Int> {
+    if (json.isNullOrBlank()) return emptyMap()
+    return try {
+        val obj = org.json.JSONObject(json)
+        val map = mutableMapOf<String, Int>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.optInt(k, 0)
+            if (v > 0) map[k] = v
+        }
+        map
+    } catch (e: Exception) {
+        emptyMap()
+    }
+}
+
+/**
+ * 某个模型实际生效的上下文长度（tokens）：
+ * 手动设置 > 平台接口读到 > 内置对照表 > 默认 128K
+ */
+fun AppSettings.contextTokensFor(model: String): Int {
+    if (modelContextLength > 0) return modelContextLength
+    modelContexts[model]?.let { return it }
+    return builtinContextTokens(model) ?: 128000
+}
+
+/** 上下文长度的来源说明（设置页展示用） */
+fun AppSettings.contextSourceFor(model: String): String = when {
+    modelContextLength > 0 -> "手动设置"
+    modelContexts.containsKey(model) -> "接口读取"
+    builtinContextTokens(model) != null -> "内置对照表"
+    else -> "默认值"
+}
+
+/** 常见模型上下文长度对照表（tokens），按模型名小写包含匹配，先匹配更具体的 */
+fun builtinContextTokens(model: String): Int? {
+    val m = model.lowercase()
+    return when {
+        "deepseek" in m -> 128000
+        "gpt-4-32k" in m -> 32768
+        "gpt-4o" in m -> 128000
+        "gpt-4-turbo" in m -> 128000
+        "gpt-4" in m -> 8192
+        "gpt-3.5" in m -> 16385
+        "claude" in m -> 200000
+        "gemini" in m -> 1000000
+        "glm-4v-flash" in m -> 16000
+        "glm" in m -> 128000
+        "qwen-long" in m -> 1000000
+        "qwen" in m -> 128000
+        "moonshot" in m -> 128000
+        "kimi" in m -> 128000
+        "doubao" in m -> 128000
+        "llama" in m -> 128000
+        else -> null
     }
 }

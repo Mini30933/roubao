@@ -63,6 +63,8 @@ import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.data.ControlMode
 import com.roubao.autopilot.data.ChatSession
 import com.roubao.autopilot.data.DeepSeekImporter
+import com.roubao.autopilot.data.contextSourceFor
+import com.roubao.autopilot.data.contextTokensFor
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
@@ -287,7 +289,7 @@ fun SettingsScreen(
             SettingsItem(
                 icon = Icons.Default.Settings,
                 title = "模型上下文长度",
-                subtitle = "约 ${settings.modelContextLength} 字（触发百分比的分母）",
+                subtitle = if (settings.modelContextLength > 0) "手动设置：${settings.modelContextLength / 1000}K tokens" else "自动识别：${settings.contextTokensFor(settings.model) / 1000}K tokens（${settings.contextSourceFor(settings.model)}）",
                 onClick = { showContextLengthDialog = true }
             )
         }
@@ -794,7 +796,10 @@ fun SettingsScreen(
     // 模型上下文长度对话框
     if (showContextLengthDialog) {
         ContextLengthDialog(
-            currentLength = settings.modelContextLength,
+            manualLength = settings.modelContextLength,
+            effectiveLength = settings.contextTokensFor(settings.model),
+            source = settings.contextSourceFor(settings.model),
+            modelName = settings.model,
             onDismiss = { showContextLengthDialog = false },
             onConfirm = {
                 onUpdateModelContextLength(it)
@@ -2814,16 +2819,25 @@ fun CompressionRatioDialog(
 }
 
 /**
- * 模型上下文长度对话框：触发百分比的分母，单位是「字」
+ * 模型上下文长度对话框（tokens）：留空 = 自动识别（接口读取 / 内置对照表 / 默认值），也可手动指定
  */
 @Composable
 fun ContextLengthDialog(
-    currentLength: Int,
+    manualLength: Int,
+    effectiveLength: Int,
+    source: String,
+    modelName: String,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit
 ) {
     val colors = BaoziTheme.colors
-    var text by remember { mutableStateOf(currentLength.toString()) }
+    var text by remember { mutableStateOf(if (manualLength > 0) manualLength.toString() else "") }
+
+    fun fmt(n: Int): String = when {
+        n >= 1000000 -> "${n / 1000000}M"
+        n >= 1000 -> "${n / 1000}K"
+        else -> n.toString()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2834,7 +2848,7 @@ fun ContextLengthDialog(
         text = {
             Column {
                 Text(
-                    text = "你用的模型能装下多少字（粗略按字数算）。DeepSeek、GLM 等常见模型可选 12.8 万；不确定的话保持默认即可。",
+                    text = "当前模型 $modelName 的上下文约 ${fmt(effectiveLength)} tokens（$source）。多数平台的模型列表接口不返回这个值，读不到时按内置对照表估算；留空即恢复自动识别。",
                     fontSize = 14.sp,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -2856,7 +2870,15 @@ fun ContextLengthDialog(
                         cursorBrush = SolidColor(colors.primary),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp)
+                            .padding(12.dp),
+                        decorationBox = { inner ->
+                            Box {
+                                if (text.isEmpty()) {
+                                    Text("自动识别", color = colors.textHint, fontSize = 14.sp)
+                                }
+                                inner()
+                            }
+                        }
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
@@ -2864,7 +2886,7 @@ fun ContextLengthDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf(64000 to "6.4万", 128000 to "12.8万", 256000 to "25.6万", 512000 to "51.2万").forEach { (v, label) ->
+                    listOf(32768 to "32K", 65536 to "64K", 131072 to "128K", 204800 to "200K").forEach { (v, label) ->
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -2885,7 +2907,7 @@ fun ContextLengthDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(text.toIntOrNull()?.coerceIn(10000, 10000000) ?: currentLength) }) {
+            TextButton(onClick = { onConfirm(if (text.isBlank()) 0 else (text.toIntOrNull()?.coerceIn(4000, 2000000) ?: manualLength)) }) {
                 Text("确定", color = colors.primary)
             }
         },

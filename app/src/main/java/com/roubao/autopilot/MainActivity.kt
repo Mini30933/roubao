@@ -325,6 +325,9 @@ class MainActivity : ComponentActivity() {
                                         val result = VLMClient.fetchModels(settings.baseUrl, settings.apiKey)
                                         result.onSuccess { models ->
                                             onSuccess(models)
+                                            // 顺带读取各模型的上下文长度（接口有返回的话），供聊天压缩自动识别
+                                            VLMClient.fetchModelContexts(settings.baseUrl, settings.apiKey)
+                                                .onSuccess { settingsManager.updateModelContexts(it) }
                                         }.onFailure { error ->
                                             onError(error.message ?: "未知错误")
                                         }
