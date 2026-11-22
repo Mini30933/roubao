@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -367,6 +368,13 @@ isSending = false
 }
 }
 
+// 打开或切换到某个会话时，直接定位到最底部（一步到位，不走滚动动画）
+LaunchedEffect(currentId) {
+if (messages.isNotEmpty()) {
+listState.scrollToItem(messages.size - 1)
+}
+}
+
 LaunchedEffect(messages.size, isSending) {
 val count = messages.size + if (isSending) 1 else 0
 if (count > 0 && messages.isNotEmpty()) {
@@ -483,11 +491,15 @@ color = colors.textHint
 }
 }
 } else {
-LazyColumn(
-state = listState,
+Box(
 modifier = Modifier
 .weight(1f)
 .fillMaxWidth()
+) {
+LazyColumn(
+state = listState,
+modifier = Modifier
+.fillMaxSize()
 .padding(horizontal = 16.dp),
 verticalArrangement = Arrangement.spacedBy(10.dp),
 contentPadding = PaddingValues(vertical = 12.dp)
@@ -502,6 +514,38 @@ text = "正在输入…",
 fontSize = 14.sp,
 color = colors.textHint,
 modifier = Modifier.padding(vertical = 4.dp)
+)
+}
+}
+}
+val totalItems = messages.size + if (isSending) 1 else 0
+val showScrollDown by remember {
+derivedStateOf {
+val info = listState.layoutInfo
+info.totalItemsCount > 0 &&
+(info.visibleItemsInfo.lastOrNull()?.index ?: 0) < info.totalItemsCount - 1
+}
+}
+if (showScrollDown) {
+Box(
+modifier = Modifier
+.align(Alignment.BottomEnd)
+.padding(end = 16.dp, bottom = 12.dp)
+.size(42.dp)
+.clip(CircleShape)
+.background(colors.backgroundCard)
+.clickable {
+scope.launch {
+if (totalItems > 0) listState.animateScrollToItem(totalItems - 1)
+}
+},
+contentAlignment = Alignment.Center
+) {
+Icon(
+imageVector = Icons.Default.KeyboardArrowDown,
+contentDescription = "回到底部",
+tint = colors.textPrimary,
+modifier = Modifier.size(26.dp)
 )
 }
 }
