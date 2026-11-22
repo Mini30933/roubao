@@ -97,7 +97,7 @@ else -> "更早"
 /**
 * 对话页：以角色扮演聊天为主，操控手机为辅助。
 * 左侧抽屉是会话侧边栏：多会话切换、搜索、重命名、置顶、多选、删除（仿主流聊天 App）。
-* 聊天记录本地保存；单个会话攒到 8000 字时用模型压缩较早的部分（最新约 10% 保留原文）。
+* 聊天记录本地保存；对话达到模型上下文的设定比例时，会提示用户手动压缩（旧消息总结成摘要，原文仍保留在界面上）。
 */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -129,6 +129,10 @@ repository.setCurrentSessionId(created.id)
 val currentSession = sessions.firstOrNull { it.id == currentId}?: sessions.first()
 var messages by remember { mutableStateOf(currentSession.messages)}
 var summary by remember { mutableStateOf(currentSession.summary)}
+var coveredCount by remember { mutableStateOf(currentSession.coveredCount)}
+var compressing by remember { mutableStateOf(false)}
+var compressNote by remember { mutableStateOf<String?>(null)}
+var compressBypass by remember { mutableStateOf(false)}
 var inputText by remember { mutableStateOf("")}
 var isSending by remember { mutableStateOf(false)}
 var pendingImage by remember { mutableStateOf<String?>(null)}
@@ -162,6 +166,7 @@ session.copy(
 title = title,
 messages = messages,
 summary = summary,
+coveredCount = coveredCount,
 updatedAt = now
 )
 } else {
@@ -185,6 +190,9 @@ val target = sessions.firstOrNull { it.id == id}?: return
 currentId = target.id
 messages = target.messages
 summary = target.summary
+coveredCount = target.coveredCount
+compressNote = null
+compressBypass = false
 repository.setCurrentSessionId(target.id)
 }
 
@@ -204,6 +212,9 @@ sessions = listOf(created) + sessions
 currentId = created.id
 messages = emptyList()
 summary = ""
+coveredCount = 0
+compressNote = null
+compressBypass = false
 repository.saveSessions(sessions)
 repository.setCurrentSessionId(created.id)
 scope.launch { drawerState.close()}
@@ -217,6 +228,7 @@ val next = sessions.maxByOrNull { it.updatedAt}?: sessions.first()
 currentId = next.id
 messages = next.messages
 summary = next.summary
+coveredCount = next.coveredCount
 }
 repository.saveSessions(sessions)
 repository.setCurrentSessionId(currentId)
@@ -261,7 +273,7 @@ array.put(JSONObject().apply {
 put("role", "system")
 put("content", system)
 })
-for (msg in messages) {
+for (msg in messages.drop(coveredCount.coerceIn(0, messages.size))) {
 array.put(JSONObject().apply {
 put("role", msg.role)
 val imgName = msg.image
@@ -285,32 +297,74 @@ put("content", msg.content)
 return array
 }
 
-// 对话攒到 8000 字时压缩：最新约 10% 保留原文，其余用模型总结成摘要
-suspend fun compressIfNeeded(client: VLMClient) {
-val total = messages.sumOf { it.content.length}
-if (total <= 8000 || messages.size < 4) {
+// 当前会真正发给模型的上下文大小：摘要 + 未被摘要覆盖的消息
+fun contextChars(): Int {
+val start = coveredCount.coerceIn(0, messages.size)
+return summary.length + messages.subList(start, messages.size).sumOf { it.content.length}
+}
+
+fun contextPercent(): Int {
+val limit = settings.modelContextLength
+if (limit <= 0) {
+return 0
+}
+return (contextChars() * 100L / limit).toInt()
+}
+
+// 是否已达到压缩触发线（且确实有足够多的旧消息可压）
+fun needCompress(): Boolean {
+if (compressBypass) {
+return false
+}
+val start = coveredCount.coerceIn(0, messages.size)
+if (messages.size - start < 4) {
+return false
+}
+val threshold = settings.modelContextLength * settings.compressionTriggerPercent / 100
+return contextChars() >= threshold
+}
+
+// 用户点「压缩对话」后执行：较早的消息总结成摘要，原文保留在界面上，只是不再发给模型
+fun doCompress() {
+if (compressing) {
 return
 }
-val keepTarget = (total * 0.10).toInt()
+scope.launch {
+compressing = true
+compressNote = null
+try {
+val client = VLMClient(
+apiKey = settings.apiKey,
+baseUrl = settings.baseUrl.ifBlank { "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+model = settings.compressionModel.ifBlank { settings.model.ifBlank { "qwen3-vl-plus"}}
+)
+val start = coveredCount.coerceIn(0, messages.size)
+val active = messages.subList(start, messages.size)
+val total = active.sumOf { it.content.length}
+val keepTarget = total * settings.compressionKeepPercent / 100
 var acc = 0
 var keepFrom = messages.size
 for (i in messages.indices.reversed()) {
+if (i < start) {
+break
+}
 acc += messages[i].content.length
 keepFrom = i
 if (acc >= keepTarget) {
 break
 }
 }
-if (keepFrom <= 0) {
-return
-}
+if (keepFrom <= start) {
+compressBypass = true
+compressNote = "最新几条消息本身就很长，没法再压缩了，可以继续发送"
+} else {
 val oldText = buildString {
 if (summary.isNotBlank()) {
 append("\n")
 append(summary)
 append("\n\n")
 }
-append(messages.subList(0, keepFrom).joinToString("\n") { msg ->
+append(messages.subList(start, keepFrom).joinToString("\n") { msg ->
 val who = when (msg.role) {
 "user" -> "用户"
 "assistant" -> "角色"
@@ -331,8 +385,18 @@ temperature = 0.3
 ).getOrNull()?.trim()
 if (!digest.isNullOrBlank() && digest.length < oldText.length) {
 summary = digest
-messages = messages.subList(keepFrom, messages.size).toList()
+coveredCount = keepFrom
 persist()
+compressNote = "✓ 已压缩：较早的对话已总结成摘要，原文仍可在本页往上翻看"
+} else {
+compressNote = "压缩失败，请重试（模型没有返回有效摘要）"
+}
+}
+} catch (e: Exception) {
+compressNote = "压缩失败：${e.message}"
+} finally {
+compressing = false
+}
 }
 }
 
@@ -384,6 +448,10 @@ val img = pendingImage
 if ((text.isEmpty() && img == null) || isSending) {
 return
 }
+if (needCompress()) {
+compressNote = "对话已达到上下文的 ${settings.compressionTriggerPercent}%，请先点上方「压缩对话」按钮再发送"
+return
+}
 inputText = ""
 pendingImage = null
 keyboardController?.hide()
@@ -399,7 +467,6 @@ scope.launch {
 isSending = true
 try {
 val client = buildClient()
-compressIfNeeded(client)
 requestReply(client, allowControl = true)
 } finally {
 isSending = false
@@ -586,6 +653,38 @@ contentDescription = "回到底部",
 tint = colors.textPrimary,
 modifier = Modifier.size(26.dp)
 )
+}
+}
+}
+}
+
+// 压缩提示条：达到触发线时出现，用户点了「压缩对话」才能继续发送
+if (needCompress() || compressing || compressNote != null) {
+Surface(
+shape = RoundedCornerShape(16.dp),
+color = colors.backgroundCard,
+modifier = Modifier
+.fillMaxWidth()
+.padding(horizontal = 16.dp, vertical = 4.dp)
+) {
+Row(
+modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+verticalAlignment = Alignment.CenterVertically
+) {
+Text(
+text = compressNote ?: "对话已用约 ${contextPercent()}% 的上下文（上限约 ${settings.modelContextLength} 字），继续发送前需要压缩一次：较早的对话会总结成摘要，原文仍可在本页翻看。",
+fontSize = 13.sp,
+color = colors.textSecondary,
+modifier = Modifier.weight(1f)
+)
+if (needCompress() || compressing) {
+Spacer(modifier = Modifier.width(10.dp))
+Button(
+onClick = { doCompress()},
+enabled = !compressing
+) {
+Text(text = if (compressing) "压缩中…" else "压缩对话", fontSize = 14.sp)
+}
 }
 }
 }

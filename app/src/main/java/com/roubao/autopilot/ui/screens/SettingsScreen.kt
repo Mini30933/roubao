@@ -82,6 +82,10 @@ fun SettingsScreen(
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
     onUpdateControlMode: (ControlMode) -> Unit,
     onUpdateCustomSystemPrompt: (String) -> Unit,
+    onUpdateCompressionModel: (String) -> Unit,
+    onUpdateCompressionTriggerPercent: (Int) -> Unit,
+    onUpdateCompressionKeepPercent: (Int) -> Unit,
+    onUpdateModelContextLength: (Int) -> Unit,
     onClearLongTermMemory: () -> Unit,
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
@@ -102,6 +106,9 @@ fun SettingsScreen(
     var showSystemPromptDialog by remember { mutableStateOf(false) }
     var showMemoryDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var showCompressionModelDialog by remember { mutableStateOf(false) }
+    var showCompressionRatioDialog by remember { mutableStateOf(false) }
+    var showContextLengthDialog by remember { mutableStateOf(false) }
 
     // 无障碍服务开启状态（从系统设置返回时刷新）
     val context = LocalContext.current
@@ -250,6 +257,38 @@ fun SettingsScreen(
                 title = "导入聊天记录",
                 subtitle = "导入 DeepSeek 导出的数据包，接着原来的对话继续聊",
                 onClick = { showImportDialog = true }
+            )
+        }
+
+        // 对话压缩分组
+        item {
+            SettingsSection(title = "对话压缩")
+        }
+
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "压缩模型",
+                subtitle = if (settings.compressionModel.isBlank()) "跟随对话模型" else settings.compressionModel,
+                onClick = { showCompressionModelDialog = true }
+            )
+        }
+
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "压缩时机与保留",
+                subtitle = "达到上下文 ${settings.compressionTriggerPercent}% 时提示压缩，保留最新 ${settings.compressionKeepPercent}%",
+                onClick = { showCompressionRatioDialog = true }
+            )
+        }
+
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "模型上下文长度",
+                subtitle = "约 ${settings.modelContextLength} 字（触发百分比的分母）",
+                onClick = { showContextLengthDialog = true }
             )
         }
 
@@ -721,6 +760,46 @@ fun SettingsScreen(
     if (showImportDialog) {
         ImportChatDialog(
             onDismiss = { showImportDialog = false }
+        )
+    }
+
+    // 压缩模型对话框
+    if (showCompressionModelDialog) {
+        CompressionModelDialog(
+            currentModel = settings.compressionModel,
+            chatModel = settings.model,
+            cachedModels = settings.cachedModels,
+            onDismiss = { showCompressionModelDialog = false },
+            onConfirm = {
+                onUpdateCompressionModel(it)
+                showCompressionModelDialog = false
+            }
+        )
+    }
+
+    // 压缩时机与保留对话框
+    if (showCompressionRatioDialog) {
+        CompressionRatioDialog(
+            triggerPercent = settings.compressionTriggerPercent,
+            keepPercent = settings.compressionKeepPercent,
+            onDismiss = { showCompressionRatioDialog = false },
+            onConfirm = { trigger, keep ->
+                onUpdateCompressionTriggerPercent(trigger)
+                onUpdateCompressionKeepPercent(keep)
+                showCompressionRatioDialog = false
+            }
+        )
+    }
+
+    // 模型上下文长度对话框
+    if (showContextLengthDialog) {
+        ContextLengthDialog(
+            currentLength = settings.modelContextLength,
+            onDismiss = { showContextLengthDialog = false },
+            onConfirm = {
+                onUpdateModelContextLength(it)
+                showContextLengthDialog = false
+            }
         )
     }
 
@@ -2552,6 +2631,267 @@ fun ImportChatDialog(
         confirmButton = {
             TextButton(onClick = { if (!busy) onDismiss() }) {
                 Text("关闭", color = colors.primary)
+            }
+        }
+    )
+}
+
+/**
+ * 压缩模型对话框：留空 = 跟随对话模型；可从已缓存的模型列表里选，也可以手动输入模型名
+ */
+@Composable
+fun CompressionModelDialog(
+    currentModel: String,
+    chatModel: String,
+    cachedModels: List<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    var model by remember { mutableStateOf(currentModel) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("压缩模型", color = colors.textPrimary)
+        },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = "把较早的对话总结成摘要时用的模型。留空则跟随对话模型（当前：$chatModel）。压缩只是做摘要，用便宜的小模型也行。",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.backgroundInput)
+                        .padding(4.dp)
+                ) {
+                    BasicTextField(
+                        value = model,
+                        onValueChange = { model = it },
+                        textStyle = TextStyle(
+                            color = colors.textPrimary,
+                            fontSize = 14.sp
+                        ),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        decorationBox = { inner ->
+                            Box {
+                                if (model.isEmpty()) {
+                                    Text("跟随对话模型", color = colors.textHint, fontSize = 14.sp)
+                                }
+                                inner()
+                            }
+                        }
+                    )
+                }
+                if (cachedModels.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    cachedModels.forEach { m ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                                .clickable { model = m },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (model == m) colors.primary.copy(alpha = 0.18f) else colors.backgroundInput
+                        ) {
+                            Text(
+                                text = m,
+                                fontSize = 14.sp,
+                                color = colors.textPrimary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(model.trim()) }) {
+                Text("确定", color = colors.primary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+/**
+ * 压缩时机与保留对话框：两个滑块——达到上下文百分之多少时提示压缩、压缩后保留最新百分之多少
+ */
+@Composable
+fun CompressionRatioDialog(
+    triggerPercent: Int,
+    keepPercent: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, Int) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    var trigger by remember { mutableStateOf(triggerPercent.toFloat()) }
+    var keep by remember { mutableStateOf(keepPercent.toFloat()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("压缩时机与保留", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "对话长度（含摘要）达到模型上下文的这个比例时，聊天页会提示压缩，不压缩就不能继续发送。",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                Text(
+                    text = "达到 ${trigger.toInt()}% 时压缩",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.primary
+                )
+                Slider(
+                    value = trigger,
+                    onValueChange = { trigger = it },
+                    valueRange = 50f..95f,
+                    steps = 8,
+                    colors = SliderDefaults.colors(
+                        thumbColor = colors.primary,
+                        activeTrackColor = colors.primary,
+                        inactiveTrackColor = colors.backgroundInput
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "压缩后保留最新 ${keep.toInt()}%",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.primary
+                )
+                Text(
+                    text = "保留下来的部分是原文，其余总结成摘要。原文始终能在对话里往上翻看，摘要只是不再逐字发给模型。",
+                    fontSize = 13.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                )
+                Slider(
+                    value = keep,
+                    onValueChange = { keep = it },
+                    valueRange = 5f..50f,
+                    steps = 8,
+                    colors = SliderDefaults.colors(
+                        thumbColor = colors.primary,
+                        activeTrackColor = colors.primary,
+                        inactiveTrackColor = colors.backgroundInput
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(trigger.toInt(), keep.toInt()) }) {
+                Text("确定", color = colors.primary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+/**
+ * 模型上下文长度对话框：触发百分比的分母，单位是「字」
+ */
+@Composable
+fun ContextLengthDialog(
+    currentLength: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    var text by remember { mutableStateOf(currentLength.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("模型上下文长度", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "你用的模型能装下多少字（粗略按字数算）。DeepSeek、GLM 等常见模型可选 12.8 万；不确定的话保持默认即可。",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.backgroundInput)
+                        .padding(4.dp)
+                ) {
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { text = it.filter { c -> c.isDigit() } },
+                        textStyle = TextStyle(
+                            color = colors.textPrimary,
+                            fontSize = 14.sp
+                        ),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(64000 to "6.4万", 128000 to "12.8万", 256000 to "25.6万", 512000 to "51.2万").forEach { (v, label) ->
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { text = v.toString() },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (text == v.toString()) colors.primary else colors.backgroundInput
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 13.sp,
+                                color = if (text == v.toString()) Color.White else colors.textPrimary,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 9.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.toIntOrNull()?.coerceIn(10000, 10000000) ?: currentLength) }) {
+                Text("确定", color = colors.primary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
             }
         }
     )

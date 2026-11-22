@@ -27,6 +27,8 @@ data class ChatSession(
     val createdAt: Long = System.currentTimeMillis(),
     var updatedAt: Long = System.currentTimeMillis(),
     var summary: String = "",
+    /** 已被摘要覆盖的消息条数：前 coveredCount 条不再发给模型，但仍在界面上显示 */
+    var coveredCount: Int = 0,
     var messages: List<ChatMessage> = emptyList()
 )
 
@@ -114,6 +116,7 @@ class ChatRepository(context: Context) {
                     createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                     updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
                     summary = obj.optString("summary", ""),
+                    coveredCount = obj.optInt("covered", 0),
                     messages = msgs
                 )
             )
@@ -140,6 +143,7 @@ class ChatRepository(context: Context) {
                 put("createdAt", session.createdAt)
                 put("updatedAt", session.updatedAt)
                 put("summary", session.summary)
+                put("covered", session.coveredCount)
                 put("messages", msgsArray)
             })
         }

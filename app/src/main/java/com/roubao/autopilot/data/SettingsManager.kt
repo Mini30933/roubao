@@ -99,7 +99,11 @@ data class AppSettings(
     val suCommandEnabled: Boolean = false,
     val controlMode: ControlMode = ControlMode.SHIZUKU,  // 设备控制方式
     val customSystemPrompt: String = "",  // 自定义系统提示词（为空时使用内置默认提示词）
-    val longTermMemory: String = ""  // 跨会话长期记忆（之前任务的指令与过程摘要）
+    val longTermMemory: String = "",  // 跨会话长期记忆（之前任务的指令与过程摘要）
+    val compressionModel: String = "",  // 聊天压缩用的模型（为空时跟随对话模型）
+    val compressionTriggerPercent: Int = 80,  // 对话达到模型上下文的百分之多少时提示压缩
+    val compressionKeepPercent: Int = 10,  // 压缩时保留最新百分之多少的原文
+    val modelContextLength: Int = 128000  // 模型上下文长度（字），压缩触发百分比的分母
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -245,7 +249,11 @@ class SettingsManager(context: Context) {
                 ControlMode.SHIZUKU
             },
             customSystemPrompt = prefs.getString("custom_system_prompt", "") ?: "",
-            longTermMemory = prefs.getString("long_term_memory", "") ?: ""
+            longTermMemory = prefs.getString("long_term_memory", "") ?: "",
+            compressionModel = prefs.getString("compression_model", "") ?: "",
+            compressionTriggerPercent = prefs.getInt("compression_trigger_percent", 80),
+            compressionKeepPercent = prefs.getInt("compression_keep_percent", 10),
+            modelContextLength = prefs.getInt("model_context_length", 128000)
         )
     }
 
@@ -386,6 +394,26 @@ class SettingsManager(context: Context) {
     fun updateCustomSystemPrompt(prompt: String) {
         prefs.edit().putString("custom_system_prompt", prompt).apply()
         _settings.value = _settings.value.copy(customSystemPrompt = prompt)
+    }
+
+    fun updateCompressionModel(model: String) {
+        prefs.edit().putString("compression_model", model).apply()
+        _settings.value = _settings.value.copy(compressionModel = model)
+    }
+
+    fun updateCompressionTriggerPercent(percent: Int) {
+        prefs.edit().putInt("compression_trigger_percent", percent).apply()
+        _settings.value = _settings.value.copy(compressionTriggerPercent = percent)
+    }
+
+    fun updateCompressionKeepPercent(percent: Int) {
+        prefs.edit().putInt("compression_keep_percent", percent).apply()
+        _settings.value = _settings.value.copy(compressionKeepPercent = percent)
+    }
+
+    fun updateModelContextLength(length: Int) {
+        prefs.edit().putInt("model_context_length", length).apply()
+        _settings.value = _settings.value.copy(modelContextLength = length)
     }
 
     /**
