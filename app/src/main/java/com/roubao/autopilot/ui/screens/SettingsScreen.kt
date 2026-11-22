@@ -3,6 +3,8 @@ package com.roubao.autopilot.ui.screens
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Star
@@ -57,6 +61,8 @@ import com.roubao.autopilot.controller.AdbBridge
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.data.ControlMode
+import com.roubao.autopilot.data.ChatSession
+import com.roubao.autopilot.data.DeepSeekImporter
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
@@ -95,6 +101,7 @@ fun SettingsScreen(
     var showControlModeDialog by remember { mutableStateOf(false) }
     var showSystemPromptDialog by remember { mutableStateOf(false) }
     var showMemoryDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
 
     // 无障碍服务开启状态（从系统设置返回时刷新）
     val context = LocalContext.current
@@ -233,6 +240,16 @@ fun SettingsScreen(
                 title = "长期记忆",
                 subtitle = if (settings.longTermMemory.isBlank()) "暂无记录" else "已保存，角色会记住之前的互动",
                 onClick = { showMemoryDialog = true }
+            )
+        }
+
+        // 导入聊天记录（DeepSeek 导出包）
+        item {
+            SettingsItem(
+                icon = Icons.Default.AddCircle,
+                title = "导入聊天记录",
+                subtitle = "导入 DeepSeek 导出的数据包，接着原来的对话继续聊",
+                onClick = { showImportDialog = true }
             )
         }
 
@@ -697,6 +714,13 @@ fun SettingsScreen(
                 onUpdateCustomSystemPrompt(it)
                 showSystemPromptDialog = false
             }
+        )
+    }
+
+    // 导入聊天记录对话框
+    if (showImportDialog) {
+        ImportChatDialog(
+            onDismiss = { showImportDialog = false }
         )
     }
 
@@ -2270,4 +2294,265 @@ fun AdbSettingsCard() {
             }
         }
     }
+}
+
+/**
+ * 导入聊天记录对话框：
+ * 第一步粘贴 DeepSeek 导出包的下载链接，或选择本地的 deepseek_data 压缩包，解析出会话列表；
+ * 第二步勾选要导入的会话（支持全选/全不选，已在应用里的会话会标出并自动排除），确认后导入。
+ */
+@Composable
+fun ImportChatDialog(
+    onDismiss: () -> Unit
+) {
+    val colors = BaoziTheme.colors
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var url by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    // 第二步的选择状态：解析出的全部会话 / 应用里已有的会话 id / 当前勾选的会话 id
+    var parsed by remember { mutableStateOf<List<ChatSession>?>(null) }
+    var existingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    fun onParsed(sessions: List<ChatSession>, existing: Set<String>) {
+        parsed = sessions
+        existingIds = existing
+        selectedIds = sessions.map { it.id }.filter { it !in existing }.toSet()
+        status = ""
+    }
+
+    fun parseLoaded(bytes: ByteArray) {
+        scope.launch {
+            busy = true
+            status = "正在解析…"
+            try {
+                val sessions = withContext(Dispatchers.IO) { DeepSeekImporter.parseExport(bytes) }
+                val existing = withContext(Dispatchers.IO) { DeepSeekImporter.existingSessionIds(context) }
+                onParsed(sessions, existing)
+            } catch (e: Exception) {
+                status = "解析失败：${e.message ?: "未知错误"}"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null && !busy) {
+            scope.launch {
+                busy = true
+                status = "正在读取压缩包…"
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: throw IllegalStateException("读不到这个文件")
+                    }
+                    busy = false
+                    parseLoaded(bytes)
+                } catch (e: Exception) {
+                    busy = false
+                    status = "读取失败：${e.message ?: "未知错误"}"
+                }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("导入聊天记录", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                val sessions = parsed
+                if (sessions == null) {
+                    // —— 第一步：拿到导出包 ——
+                    Text(
+                        text = "支持 DeepSeek 官方导出的数据包（deepseek_data-*.zip）：在 DeepSeek 里「设置 → 数据管理 → 导出数据」拿到下载链接后粘贴到下面，或直接选择下载好的压缩包。解析后可以挑选要导入哪些对话。",
+                        fontSize = 14.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("导出包下载链接") },
+                        placeholder = { Text("https://…deepseek_data-….zip…") },
+                        singleLine = true,
+                        enabled = !busy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp)
+                    )
+
+                    Button(
+                        onClick = {
+                            if (url.isBlank() || busy) return@Button
+                            scope.launch {
+                                busy = true
+                                status = "正在下载导出包…"
+                                try {
+                                    val bytes = DeepSeekImporter.downloadZip(url)
+                                    busy = false
+                                    parseLoaded(bytes)
+                                } catch (e: Exception) {
+                                    busy = false
+                                    status = "下载失败：${e.message ?: "未知错误"}"
+                                }
+                            }
+                        },
+                        enabled = !busy && url.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("从链接导入")
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            if (!busy) picker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("选择压缩包文件导入")
+                    }
+                } else {
+                    // —— 第二步：勾选要导入的会话 ——
+                    val selectableIds = sessions.map { it.id }.filter { it !in existingIds }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "共 ${sessions.size} 个会话，已选 ${selectedIds.size} 个",
+                            fontSize = 14.sp,
+                            color = colors.textPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = { selectedIds = selectableIds.toSet() },
+                            enabled = !busy
+                        ) { Text("全选") }
+                        TextButton(
+                            onClick = { selectedIds = emptySet() },
+                            enabled = !busy
+                        ) { Text("全不选") }
+                    }
+
+                    val dateFmt = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA) }
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp)
+                    ) {
+                        items(sessions, key = { it.id }) { s ->
+                            val exists = s.id in existingIds
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !exists && !busy) {
+                                        selectedIds = if (s.id in selectedIds) selectedIds - s.id else selectedIds + s.id
+                                    }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = s.id in selectedIds,
+                                    onCheckedChange = { checked ->
+                                        selectedIds = if (checked) selectedIds + s.id else selectedIds - s.id
+                                    },
+                                    enabled = !exists && !busy
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = s.title,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (exists) colors.textSecondary else colors.textPrimary
+                                    )
+                                    Text(
+                                        text = "${s.messages.size} 条消息 · ${dateFmt.format(java.util.Date(s.createdAt))}" +
+                                            if (exists) " · 已在应用里" else "",
+                                        fontSize = 12.sp,
+                                        color = colors.textSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = { parsed = null; selectedIds = emptySet(); status = "" },
+                            enabled = !busy,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("重新选来源")
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Button(
+                            onClick = {
+                                val chosen = sessions.filter { it.id in selectedIds }
+                                if (chosen.isEmpty() || busy) return@Button
+                                scope.launch {
+                                    busy = true
+                                    status = "正在导入…"
+                                    try {
+                                        val outcome = withContext(Dispatchers.IO) {
+                                            DeepSeekImporter.mergeInto(context, chosen)
+                                        }
+                                        parsed = null
+                                        selectedIds = emptySet()
+                                        status = "导入完成：新增 ${outcome.added} 个会话。返回对话页就能看到，可以点开接着聊。"
+                                    } catch (e: Exception) {
+                                        status = "导入失败：${e.message ?: "未知错误"}"
+                                    } finally {
+                                        busy = false
+                                    }
+                                }
+                            },
+                            enabled = !busy && selectedIds.isNotEmpty(),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("导入选中（${selectedIds.size}）")
+                        }
+                    }
+                }
+
+                if (busy) {
+                    Row(
+                        modifier = Modifier.padding(top = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(status, fontSize = 14.sp, color = colors.textSecondary)
+                    }
+                } else if (status.isNotEmpty()) {
+                    Text(
+                        text = status,
+                        fontSize = 14.sp,
+                        color = colors.textPrimary,
+                        modifier = Modifier.padding(top = 16.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { if (!busy) onDismiss() }) {
+                Text("关闭", color = colors.primary)
+            }
+        }
+    )
 }
