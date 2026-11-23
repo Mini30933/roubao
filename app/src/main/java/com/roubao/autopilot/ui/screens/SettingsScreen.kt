@@ -79,7 +79,6 @@ fun SettingsScreen(
     onUpdateCachedModels: (List<String>) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
-    onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
     onUpdateControlMode: (ControlMode) -> Unit,
@@ -550,64 +549,6 @@ fun SettingsScreen(
         // 反馈分组
         item {
             SettingsSection(title = "反馈与调试")
-        }
-
-        // 云端崩溃上报开关
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(colors.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "云端崩溃上报",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = if (settings.cloudCrashReportEnabled) "已开启，帮助我们改进应用" else "已关闭",
-                            fontSize = 13.sp,
-                            color = colors.textSecondary,
-                            maxLines = 1
-                        )
-                    }
-                    Switch(
-                        checked = settings.cloudCrashReportEnabled,
-                        onCheckedChange = { onUpdateCloudCrashReport(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = colors.primary,
-                            checkedTrackColor = colors.primary.copy(alpha = 0.5f),
-                            uncheckedThumbColor = colors.textHint,
-                            uncheckedTrackColor = colors.backgroundInput
-                        )
-                    )
-                }
-            }
         }
 
         item {

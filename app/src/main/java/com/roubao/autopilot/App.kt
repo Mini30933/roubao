@@ -26,18 +26,8 @@ class App : Application() {
         // 初始化崩溃捕获（本地日志）
         CrashHandler.getInstance().init(this)
 
-        // 初始化 Firebase Crashlytics（根据用户设置决定是否启用）
-        val settingsManager = SettingsManager(this)
-        val cloudCrashReportEnabled = settingsManager.settings.value.cloudCrashReportEnabled
-        FirebaseCrashlytics.getInstance().apply {
-            setCrashlyticsCollectionEnabled(cloudCrashReportEnabled)
-            setCustomKey("app_version", BuildConfig.VERSION_NAME)
-            setCustomKey("device_model", android.os.Build.MODEL)
-            setCustomKey("android_version", android.os.Build.VERSION.SDK_INT.toString())
-            // 发送待上传的崩溃报告
-            sendUnsentReports()
-        }
-        println("[App] 云端崩溃上报: ${if (cloudCrashReportEnabled) "已开启" else "已关闭"}")
+        // 独立分支：不接入云端崩溃上报，崩溃只保留本地日志
+        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(false)
 
         // 初始化 Shizuku
         Shizuku.addRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
@@ -77,14 +67,6 @@ class App : Application() {
     override fun onTerminate() {
         super.onTerminate()
         Shizuku.removeRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
-    }
-
-    /**
-     * 动态更新云端崩溃上报开关
-     */
-    fun updateCloudCrashReportEnabled(enabled: Boolean) {
-        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(enabled)
-        println("[App] 云端崩溃上报已${if (enabled) "开启" else "关闭"}")
     }
 
     companion object {

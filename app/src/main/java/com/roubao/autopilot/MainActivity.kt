@@ -159,16 +159,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // 首次启动显示引导画面
-                if (!settings.hasSeenOnboarding) {
-                    OnboardingScreen(
-                        onComplete = {
-                            settingsManager.setOnboardingSeen()
-                        }
-                    )
-                } else {
-                    MainApp()
-                }
+                MainApp()
             }
         }
     }
@@ -378,10 +369,6 @@ class MainActivity : ComponentActivity() {
                                 onUpdateCachedModels = { settingsManager.updateCachedModels(it) },
                                 onUpdateThemeMode = { settingsManager.updateThemeMode(it) },
                                 onUpdateMaxSteps = { settingsManager.updateMaxSteps(it) },
-                                onUpdateCloudCrashReport = { enabled ->
-                                    settingsManager.updateCloudCrashReportEnabled(enabled)
-                                    App.getInstance().updateCloudCrashReportEnabled(enabled)
-                                },
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
                                 onUpdateControlMode = { settingsManager.updateControlMode(it) },

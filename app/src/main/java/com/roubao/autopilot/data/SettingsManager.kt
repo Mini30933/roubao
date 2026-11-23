@@ -94,7 +94,7 @@ data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val hasSeenOnboarding: Boolean = false,
     val maxSteps: Int = 25,
-    val cloudCrashReportEnabled: Boolean = true,
+    val cloudCrashReportEnabled: Boolean = false,
     val rootModeEnabled: Boolean = false,
     val suCommandEnabled: Boolean = false,
     val controlMode: ControlMode = ControlMode.SHIZUKU,  // 设备控制方式
@@ -239,7 +239,7 @@ class SettingsManager(context: Context) {
             themeMode = themeMode,
             hasSeenOnboarding = prefs.getBoolean("has_seen_onboarding", false),
             maxSteps = prefs.getInt("max_steps", 25),
-            cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
+            cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", false),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
             suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
             controlMode = try {
