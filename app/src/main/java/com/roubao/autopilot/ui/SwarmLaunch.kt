@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -54,6 +55,9 @@ object LaunchTargets {
     var sub1 by mutableStateOf<Rect?>(null)
     var sub2 by mutableStateOf<Rect?>(null)
     var input by mutableStateOf<Rect?>(null)
+
+    /** 遮罩层自身在窗口中的原点；元素位置减去它才是遮罩画布的本地坐标 */
+    var rootOffset by mutableStateOf(Offset.Zero)
 }
 
 fun LayoutCoordinates.launchRect(): Rect =
@@ -188,6 +192,7 @@ fun SwarmLaunchAnimation(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onGloballyPositioned { LaunchTargets.rootOffset = it.positionInWindow() }
             .pointerInput(Unit) {
                 detectTapGestures { onFinished() }
             }
@@ -200,7 +205,9 @@ fun SwarmLaunchAnimation(
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 try {
-                    val avatar = LaunchTargets.avatar
+                    val origin = LaunchTargets.rootOffset
+                    fun Rect?.loc(): Rect? = this?.translate(-origin.x, -origin.y)
+                    val avatar = LaunchTargets.avatar.loc()
                     val maskAlpha: Float
                     if (avatar == null) {
                         // 元素还没布局好先全盖；等太久就整体淡出
@@ -230,7 +237,7 @@ fun SwarmLaunchAnimation(
                             )
                         }
                         // 问候语：洞从左往右展开，像被写出来
-                        val greet = LaunchTargets.greeting
+                        val greet = LaunchTargets.greeting.loc()
                         val pG = ((t - 0.20f) / 0.16f).coerceIn(0f, 1f)
                         if (greet != null && pG > 0f) {
                             drawRect(
@@ -241,7 +248,7 @@ fun SwarmLaunchAnimation(
                             )
                         }
                         // 副标题两行：依次展开
-                        val s1 = LaunchTargets.sub1
+                        val s1 = LaunchTargets.sub1.loc()
                         val pS1 = ((t - 0.36f) / 0.08f).coerceIn(0f, 1f)
                         if (s1 != null && pS1 > 0f) {
                             drawRect(
@@ -251,7 +258,7 @@ fun SwarmLaunchAnimation(
                                 blendMode = BlendMode.Clear
                             )
                         }
-                        val s2 = LaunchTargets.sub2
+                        val s2 = LaunchTargets.sub2.loc()
                         val pS2 = ((t - 0.44f) / 0.08f).coerceIn(0f, 1f)
                         if (s2 != null && pS2 > 0f) {
                             drawRect(
@@ -262,7 +269,7 @@ fun SwarmLaunchAnimation(
                             )
                         }
                         // 输入框：圆角洞从中心长开
-                        val input = LaunchTargets.input
+                        val input = LaunchTargets.input.loc()
                         val pI = easeOut((t - 0.52f) / 0.16f)
                         if (input != null && pI > 0f) {
                             val iw = input.width * pI
@@ -276,7 +283,7 @@ fun SwarmLaunchAnimation(
                             )
                         }
                         // 顶栏：洞从中间向两边展开
-                        val bar = LaunchTargets.topBar
+                        val bar = LaunchTargets.topBar.loc()
                         val pT = ((t - 0.68f) / 0.10f).coerceIn(0f, 1f)
                         if (bar != null && pT > 0f) {
                             val bw = bar.width * pT
@@ -318,11 +325,13 @@ fun SwarmLaunchAnimation(
                 val dtScale = dtMs / 16.7f
                 val timeSec = elapsed / 1000f
 
-                val avatar = LaunchTargets.avatar
-                val greet = LaunchTargets.greeting
-                val s1 = LaunchTargets.sub1
-                val s2 = LaunchTargets.sub2
-                val input = LaunchTargets.input
+                val origin2 = LaunchTargets.rootOffset
+                fun Rect?.loc2(): Rect? = this?.translate(-origin2.x, -origin2.y)
+                val avatar = LaunchTargets.avatar.loc2()
+                val greet = LaunchTargets.greeting.loc2()
+                val s1 = LaunchTargets.sub1.loc2()
+                val s2 = LaunchTargets.sub2.loc2()
+                val input = LaunchTargets.input.loc2()
 
                 // 各工位光标的实时位置（都贴着真实元素的揭开前沿）
                 val pA = easeOut((t - 0.08f) / 0.12f)
