@@ -13,8 +13,8 @@ android {
         applicationId = "com.roubao.autopilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.4.12"
+        versionCode = 18
+        versionName = "1.4.13"
 
         vectorDrawables {
             useSupportLibrary = true
