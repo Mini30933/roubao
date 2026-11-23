@@ -111,6 +111,7 @@ fun SettingsScreen(
     var showCompressionModelDialog by remember { mutableStateOf(false) }
     var showCompressionRatioDialog by remember { mutableStateOf(false) }
     var showContextLengthDialog by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
 
     // 无障碍服务开启状态（从系统设置返回时刷新）
     val context = LocalContext.current
@@ -633,7 +634,7 @@ fun SettingsScreen(
                 icon = Icons.Default.Info,
                 title = "版本",
                 subtitle = BuildConfig.VERSION_NAME,
-                onClick = { }
+                onClick = { showAbout = true }
             )
         }
 
@@ -844,6 +845,14 @@ fun SettingsScreen(
                 onUpdateSuCommandEnabled(true)
                 showSuCommandWarningDialog = false
             }
+        )
+    }
+
+    // 「关于伴语」页：整页盖在设置之上，返回即回到设置（滚动位置保留）
+    if (showAbout) {
+        AboutScreen(
+            onBack = { showAbout = false },
+            onCheckUpdate = onCheckUpdate
         )
     }
 }

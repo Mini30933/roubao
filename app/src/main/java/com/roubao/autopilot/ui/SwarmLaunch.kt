@@ -4,13 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,9 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -48,14 +40,16 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * 冷启动 swarm 光标动画（仿开源 Swarm 效果的原生实现，10 秒叙事版）：
- * 20 个带名字标签的彩色光标像协作者一样飞入，先蜂群盘旋，再有的拖选一段文字、
- * 有的框选中央标志、有的在输入框里打字并点发送，最后全体绕标志成环、散开淡出。
+ * 冷启动 swarm 光标动画（6 秒）：20 个带名字标签的彩色光标飞进来，
+ * 一起把「新对话」主页原样画出来——描出头像圆圈、逐字写出「嗨！今天想聊些什么？」、
+ * 扫出副标题、勾出底部输入框，最后点一下发送键、散开淡出，无缝落到真实主页上。
  * 只在 App 冷启动时播放一次，点击任意处跳过。
  * 纯装饰动画：内部状态都是普通变量（不在绘制阶段写快照状态），绘制异常会被吞掉并直接结束动画。
  */
-private const val SWARM_TOTAL_MS = 10000L
+private const val SWARM_TOTAL_MS = 6000L
 private const val SWARM_GREETING = "嗨！今天想聊些什么？"
+private const val SWARM_SUB1 = "在「设置」里填好角色设定，我就是你要的那个角色"
+private const val SWARM_SUB2 = "聊天中让我操作手机，我也会照做"
 
 private class SwarmCursor(
     var x: Float,
@@ -110,18 +104,35 @@ fun SwarmLaunchAnimation(
     var frameMs by remember { mutableStateOf(0L) }
     var canvasSize by remember { mutableStateOf(Size.Zero) }
 
-    // 名字标签与打字文本的排版预先量好，避免每帧重复测量
+    // 所有要画的文字先量好，避免每帧重复测量
     val tagStyle = remember {
         TextStyle(color = Color.White, fontSize = 9.5.sp, fontWeight = FontWeight.Medium)
     }
     val tagLayouts: List<TextLayoutResult> = remember {
         SWARM_NAMES.map { textMeasurer.measure(it, tagStyle) }
     }
-    val typeStyle = remember {
-        TextStyle(color = Color(0xFFE8E8E8), fontSize = 14.sp)
+    val greetingStyle = remember {
+        TextStyle(color = Color(0xFF111111), fontSize = 25.sp, fontWeight = FontWeight.Bold)
     }
-    val typeLayouts: List<TextLayoutResult> = remember {
-        (0..SWARM_GREETING.length).map { textMeasurer.measure(SWARM_GREETING.substring(0, it), typeStyle) }
+    val greetingLayouts: List<TextLayoutResult> = remember {
+        (0..SWARM_GREETING.length).map { textMeasurer.measure(SWARM_GREETING.substring(0, it), greetingStyle) }
+    }
+    val subStyle = remember {
+        TextStyle(color = Color(0xFF9A9A9A), fontSize = 13.sp)
+    }
+    val sub1Layout = remember { textMeasurer.measure(SWARM_SUB1, subStyle) }
+    val sub2Layout = remember { textMeasurer.measure(SWARM_SUB2, subStyle) }
+    val titleLayout = remember {
+        textMeasurer.measure("新对话", TextStyle(color = Color(0xFF111111), fontSize = 19.sp, fontWeight = FontWeight.Bold))
+    }
+    val placeholderLayout = remember {
+        textMeasurer.measure("发消息或按住说话", TextStyle(color = Color(0xFF9A9A9A), fontSize = 15.sp))
+    }
+    val chipLayout = remember {
+        textMeasurer.measure("角色设定", TextStyle(color = Color(0xFF666666), fontSize = 12.5.sp))
+    }
+    val sLayout = remember {
+        textMeasurer.measure("S", TextStyle(color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold))
     }
 
     // 尺寸确定后生成光标（从屏幕四边外飞入）
@@ -144,7 +155,7 @@ fun SwarmLaunchAnimation(
                         name = SWARM_NAMES[i],
                         ringAngle = (i.toFloat() / SWARM_NAMES.size) * 360f,
                         seed = rnd.nextFloat() * 100f,
-                        orbitR = (64f + rnd.nextFloat() * 92f)
+                        orbitR = (54f + rnd.nextFloat() * 84f)
                     )
                 )
             }
@@ -171,13 +182,11 @@ fun SwarmLaunchAnimation(
 
     val elapsed = if (startMs > 0L) frameMs - startMs else 0L
     val t = (elapsed.toFloat() / SWARM_TOTAL_MS).coerceIn(0f, 1f)
-    // 最后 8% 整体淡出到主界面
+    // 最后 10% 整体淡出，落到真实主页上
     val overlayAlpha = when {
-        t < 0.92f -> 1f
-        else -> (1f - (t - 0.92f) / 0.08f).coerceIn(0f, 1f)
+        t < 0.90f -> 1f
+        else -> (1f - (t - 0.90f) / 0.10f).coerceIn(0f, 1f)
     }
-    // 中央标志在被框选前淡入，成环阶段最亮
-    val logoAlpha = easeInOut((t - 0.14f) / 0.10f)
 
     Box(
         modifier = Modifier
@@ -200,9 +209,10 @@ fun SwarmLaunchAnimation(
                     return@Canvas
                 }
                 val cx = w / 2f
-                val cy = h / 2f
                 val cursors = runtime.cursors
-                val primary = Color(0xFF4D6BFE)
+                val primary = colors.primary
+                val ink = colors.textPrimary
+                val subInk = colors.textHint
 
                 val dtMs = if (runtime.prevFrameMs < 0L) {
                     16f
@@ -213,215 +223,301 @@ fun SwarmLaunchAnimation(
                 val dtScale = dtMs / 16.7f
                 val timeSec = elapsed / 1000f
 
-                // ---------- 场景几何 ----------
-                // 顶部"文档"：5 行文字条
-                val docW = w * 0.56f
-                val docX = cx - docW / 2f
-                val docY = h * 0.235f
-                val lineH = 9f * dpPx
-                val lineGap = 10f * dpPx
-                val lineFrac = listOf(1f, 0.92f, 0.97f, 0.85f, 0.58f)
-                val docAlpha = easeInOut((t - 0.17f) / 0.05f) * (1f - easeInOut((t - 0.62f) / 0.06f))
-                // 中央标志的框选范围
-                val logoBoxW = 156f * dpPx
-                val logoBoxH = 148f * dpPx
-                val logoBoxX = cx - logoBoxW / 2f
-                val logoBoxY = cy - 64f * dpPx
-                val logoDragP = easeInOut((t - 0.21f) / 0.20f)
-                val logoBoxAlpha = if (t < 0.62f) logoDragP else (1f - easeInOut((t - 0.62f) / 0.06f))
-                // 底部输入框
-                val barW = w * 0.74f
-                val barH = 48f * dpPx
-                val barX = cx - barW / 2f
-                val barY = h * 0.775f
-                val barAlpha = easeInOut((t - 0.42f) / 0.05f) * (1f - easeInOut((t - 0.80f) / 0.06f))
-                val sendCenter = Offset(barX + barW - 25f * dpPx, barY + barH / 2f)
-                // 打字进度
-                val typeP = ((t - 0.45f) / 0.17f).coerceIn(0f, 1f)
-                val typedCount = floor(typeP * SWARM_GREETING.length).toInt()
-                val typedLayout = typeLayouts[typedCount]
-                val caretX = barX + 16f * dpPx + typedLayout.size.width
+                // ---------- 主页几何（与真实主页同位置） ----------
+                val topBarY = h * 0.078f
+                val avatarC = Offset(cx, h * 0.408f)
+                val avatarR = 36f * dpPx
+                val greetFull = greetingLayouts[SWARM_GREETING.length]
+                val greetX = cx - greetFull.size.width / 2f
+                val greetY = h * 0.487f
+                val sub1X = cx - sub1Layout.size.width / 2f
+                val sub1Y = h * 0.548f
+                val sub2X = cx - sub2Layout.size.width / 2f
+                val sub2Y = sub1Y + 21f * dpPx
+                val cardX0 = w * 0.045f
+                val cardX1 = w * 0.955f
+                val cardH = 104f * dpPx
+                val cardBot = h - 14f * dpPx
+                val cardTop = cardBot - cardH
+                val cardRadius = 26f * dpPx
+                val sendC = Offset(cardX1 - 40f * dpPx, cardBot - 27f * dpPx)
 
-                // ---------- 文档与文字拖选 ----------
-                if (docAlpha > 0f) {
-                    val barColor = Color(0xFF9A9A9A).copy(alpha = 0.35f * docAlpha)
-                    for (i in lineFrac.indices) {
-                        drawRoundRect(
-                            color = barColor,
-                            topLeft = Offset(docX, docY + i * (lineH + lineGap)),
-                            size = Size(docW * lineFrac[i], lineH),
-                            cornerRadius = CornerRadius(lineH / 2f, lineH / 2f)
+                // ---------- 各元素的绘制进度 ----------
+                val topAlpha = easeInOut((t - 0.02f) / 0.10f)
+                val traceP = ((t - 0.05f) / 0.17f).coerceIn(0f, 1f)
+                val avatarFill = easeInOut((t - 0.20f) / 0.07f)
+                val typeP = ((t - 0.25f) / 0.20f).coerceIn(0f, 1f)
+                val typedCount = floor(typeP * SWARM_GREETING.length).toInt().coerceIn(0, SWARM_GREETING.length)
+                val sub1P = easeInOut((t - 0.45f) / 0.07f)
+                val sub2P = easeInOut((t - 0.51f) / 0.07f)
+                val cardStrokeP = ((t - 0.57f) / 0.09f).coerceIn(0f, 1f)
+                val cardFill = easeInOut((t - 0.63f) / 0.07f)
+                val cardInner = easeInOut((t - 0.68f) / 0.08f)
+
+                // ---------- 顶栏 ----------
+                if (topAlpha > 0f) {
+                    val menuX = w * 0.075f
+                    for (i in -1..1) {
+                        drawLine(
+                            color = ink.copy(alpha = topAlpha),
+                            start = Offset(menuX - 10f * dpPx, topBarY + i * 5.5f * dpPx),
+                            end = Offset(menuX + 10f * dpPx, topBarY + i * 5.5f * dpPx),
+                            strokeWidth = 2.2f * dpPx
                         )
                     }
-                    // 拖选高亮：逐行扫过去
-                    val selP = easeInOut((t - 0.20f) / 0.24f)
-                    if (selP > 0f) {
-                        val pos = selP * lineFrac.size
-                        val curLine = floor(pos).toInt().coerceAtMost(lineFrac.size - 1)
-                        val curFrac = (pos - floor(pos)).coerceIn(0f, 1f)
-                        for (i in 0 until curLine) {
-                            drawRoundRect(
-                                color = primary.copy(alpha = 0.30f * docAlpha),
-                                topLeft = Offset(docX, docY + i * (lineH + lineGap)),
-                                size = Size(docW * lineFrac[i], lineH),
-                                cornerRadius = CornerRadius(lineH / 2f, lineH / 2f)
-                            )
-                        }
-                        drawRoundRect(
-                            color = primary.copy(alpha = 0.30f * docAlpha),
-                            topLeft = Offset(docX, docY + curLine * (lineH + lineGap)),
-                            size = Size(docW * lineFrac[curLine] * curFrac, lineH),
-                            cornerRadius = CornerRadius(lineH / 2f, lineH / 2f)
-                        )
-                    }
+                    drawText(
+                        textLayoutResult = titleLayout,
+                        color = ink,
+                        topLeft = Offset(cx - titleLayout.size.width / 2f, topBarY - titleLayout.size.height / 2f),
+                        alpha = topAlpha
+                    )
+                    // 右上编辑笔（简化成斜线 + 笔尖）
+                    val ex = w * 0.925f
+                    drawLine(
+                        color = ink.copy(alpha = topAlpha),
+                        start = Offset(ex - 7f * dpPx, topBarY + 7f * dpPx),
+                        end = Offset(ex + 6f * dpPx, topBarY - 6f * dpPx),
+                        strokeWidth = 2.2f * dpPx
+                    )
+                    drawLine(
+                        color = ink.copy(alpha = topAlpha),
+                        start = Offset(ex - 7f * dpPx, topBarY + 7f * dpPx),
+                        end = Offset(ex - 8.5f * dpPx, topBarY + 1.5f * dpPx),
+                        strokeWidth = 2.2f * dpPx
+                    )
                 }
 
-                // ---------- 标志框选 ----------
-                if (logoBoxAlpha > 0f && logoDragP > 0f) {
-                    val cornerX = logoBoxX + logoBoxW * logoDragP
-                    val cornerY = logoBoxY + logoBoxH * logoDragP
-                    drawRect(
-                        color = primary.copy(alpha = 0.10f * logoBoxAlpha),
-                        topLeft = Offset(logoBoxX, logoBoxY),
-                        size = Size(cornerX - logoBoxX, cornerY - logoBoxY)
+                // ---------- 头像：先描圈，再填充，最后浮现 S ----------
+                if (traceP > 0f) {
+                    drawArc(
+                        color = primary.copy(alpha = 0.95f),
+                        startAngle = -90f,
+                        sweepAngle = 360f * traceP,
+                        useCenter = false,
+                        topLeft = Offset(avatarC.x - avatarR, avatarC.y - avatarR),
+                        size = Size(avatarR * 2f, avatarR * 2f),
+                        style = Stroke(width = 3f * dpPx)
                     )
-                    drawRect(
-                        color = primary.copy(alpha = 0.9f * logoBoxAlpha),
-                        topLeft = Offset(logoBoxX, logoBoxY),
-                        size = Size(cornerX - logoBoxX, cornerY - logoBoxY),
+                }
+                if (avatarFill > 0f) {
+                    drawCircle(
+                        color = primary.copy(alpha = avatarFill),
+                        radius = avatarR,
+                        center = avatarC
+                    )
+                    drawText(
+                        textLayoutResult = sLayout,
+                        topLeft = Offset(
+                            avatarC.x - sLayout.size.width / 2f,
+                            avatarC.y - sLayout.size.height / 2f
+                        ),
+                        alpha = avatarFill
+                    )
+                }
+
+                // ---------- 问候语：逐字写出 ----------
+                if (typedCount > 0) {
+                    val layout = greetingLayouts[typedCount]
+                    drawText(
+                        textLayoutResult = layout,
+                        color = ink,
+                        topLeft = Offset(greetX, greetY)
+                    )
+                }
+                val penTip = Offset(
+                    greetX + greetingLayouts[typedCount].size.width,
+                    greetY + greetFull.size.height * 0.72f
+                )
+
+                // ---------- 副标题：逐行扫出 ----------
+                if (sub1P > 0f) {
+                    drawText(
+                        textLayoutResult = sub1Layout,
+                        color = subInk,
+                        topLeft = Offset(sub1X, sub1Y),
+                        alpha = sub1P
+                    )
+                }
+                if (sub2P > 0f) {
+                    drawText(
+                        textLayoutResult = sub2Layout,
+                        color = subInk,
+                        topLeft = Offset(sub2X, sub2Y),
+                        alpha = sub2P
+                    )
+                }
+
+                // ---------- 输入框：先勾边，再填充，再长出里面的东西 ----------
+                if (cardStrokeP > 0f) {
+                    drawRoundRect(
+                        color = subInk.copy(alpha = 0.55f * cardStrokeP),
+                        topLeft = Offset(cardX0, cardTop),
+                        size = Size(cardX1 - cardX0, cardH),
+                        cornerRadius = CornerRadius(cardRadius, cardRadius),
                         style = Stroke(width = 1.4f * dpPx)
                     )
                 }
-
-                // ---------- 输入框与打字 ----------
-                if (barAlpha > 0f) {
+                if (cardFill > 0f) {
                     drawRoundRect(
-                        color = Color(0xFF242424).copy(alpha = barAlpha),
-                        topLeft = Offset(barX, barY),
-                        size = Size(barW, barH),
-                        cornerRadius = CornerRadius(barH / 2f, barH / 2f)
+                        color = colors.backgroundInput.copy(alpha = cardFill),
+                        topLeft = Offset(cardX0, cardTop),
+                        size = Size(cardX1 - cardX0, cardH),
+                        cornerRadius = CornerRadius(cardRadius, cardRadius)
                     )
+                }
+                if (cardInner > 0f) {
+                    drawText(
+                        textLayoutResult = placeholderLayout,
+                        color = subInk,
+                        topLeft = Offset(cardX0 + 18f * dpPx, cardTop + 14f * dpPx),
+                        alpha = cardInner
+                    )
+                    // 角色设定胶囊
+                    val chipX = cardX0 + 14f * dpPx
+                    val chipY = cardBot - 42f * dpPx
+                    val chipW = chipLayout.size.width + 36f * dpPx
+                    val chipH = 29f * dpPx
                     drawRoundRect(
-                        color = Color(0xFF3A3A3A).copy(alpha = barAlpha),
-                        topLeft = Offset(barX, barY),
-                        size = Size(barW, barH),
-                        cornerRadius = CornerRadius(barH / 2f, barH / 2f),
-                        style = Stroke(width = 1f * dpPx)
-                    )
-                    if (typedCount > 0) {
-                        drawText(
-                            textLayoutResult = typedLayout,
-                            topLeft = Offset(
-                                barX + 16f * dpPx,
-                                barY + (barH - typedLayout.size.height) / 2f
-                            ),
-                            alpha = barAlpha
-                        )
-                    }
-                    // 光标竖线（打字阶段闪烁）
-                    if (t in 0.44f..0.80f && (elapsed / 380L) % 2L == 0L) {
-                        drawRect(
-                            color = primary.copy(alpha = barAlpha),
-                            topLeft = Offset(caretX + 2f * dpPx, barY + barH / 2f - 9f * dpPx),
-                            size = Size(2f * dpPx, 18f * dpPx)
-                        )
-                    }
-                    // 发送圆钮
-                    drawCircle(
-                        color = primary.copy(alpha = barAlpha),
-                        radius = 15f * dpPx,
-                        center = sendCenter
+                        color = subInk.copy(alpha = 0.6f * cardInner),
+                        topLeft = Offset(chipX, chipY),
+                        size = Size(chipW, chipH),
+                        cornerRadius = CornerRadius(chipH / 2f, chipH / 2f),
+                        style = Stroke(width = 1.1f * dpPx)
                     )
                     drawCircle(
-                        color = Color.White.copy(alpha = barAlpha),
-                        radius = 5.5f * dpPx,
-                        center = sendCenter
+                        color = colors.textSecondary.copy(alpha = cardInner),
+                        radius = 3.6f * dpPx,
+                        center = Offset(chipX + 13f * dpPx, chipY + chipH / 2f - 3.4f * dpPx)
+                    )
+                    drawArc(
+                        color = colors.textSecondary.copy(alpha = cardInner),
+                        startAngle = 180f,
+                        sweepAngle = 180f,
+                        useCenter = false,
+                        topLeft = Offset(chipX + 7.4f * dpPx, chipY + chipH / 2f - 1.5f * dpPx),
+                        size = Size(11.2f * dpPx, 9f * dpPx),
+                        style = Stroke(width = 1.6f * dpPx)
+                    )
+                    drawText(
+                        textLayoutResult = chipLayout,
+                        color = colors.textSecondary,
+                        topLeft = Offset(
+                            chipX + 24f * dpPx,
+                            chipY + (chipH - chipLayout.size.height) / 2f
+                        ),
+                        alpha = cardInner
+                    )
+                    // 加号
+                    val plusC = Offset(cardX1 - 92f * dpPx, cardBot - 27f * dpPx)
+                    drawLine(
+                        color = colors.textSecondary.copy(alpha = cardInner),
+                        start = Offset(plusC.x - 8f * dpPx, plusC.y),
+                        end = Offset(plusC.x + 8f * dpPx, plusC.y),
+                        strokeWidth = 2f * dpPx
+                    )
+                    drawLine(
+                        color = colors.textSecondary.copy(alpha = cardInner),
+                        start = Offset(plusC.x, plusC.y - 8f * dpPx),
+                        end = Offset(plusC.x, plusC.y + 8f * dpPx),
+                        strokeWidth = 2f * dpPx
+                    )
+                    // 发送圆钮 + 上箭头
+                    drawCircle(
+                        color = (if (darkTheme) Color(0xFF2E2E2E) else Color(0xFFE3E3E3)).copy(alpha = cardInner),
+                        radius = 25f * dpPx,
+                        center = sendC
+                    )
+                    val arrowInk = if (darkTheme) Color.White else Color(0xFF666666)
+                    drawLine(
+                        color = arrowInk.copy(alpha = cardInner),
+                        start = Offset(sendC.x, sendC.y + 8f * dpPx),
+                        end = Offset(sendC.x, sendC.y - 8f * dpPx),
+                        strokeWidth = 2.4f * dpPx
+                    )
+                    drawLine(
+                        color = arrowInk.copy(alpha = cardInner),
+                        start = Offset(sendC.x - 5.5f * dpPx, sendC.y - 2.5f * dpPx),
+                        end = Offset(sendC.x, sendC.y - 8.5f * dpPx),
+                        strokeWidth = 2.4f * dpPx
+                    )
+                    drawLine(
+                        color = arrowInk.copy(alpha = cardInner),
+                        start = Offset(sendC.x + 5.5f * dpPx, sendC.y - 2.5f * dpPx),
+                        end = Offset(sendC.x, sendC.y - 8.5f * dpPx),
+                        strokeWidth = 2.4f * dpPx
                     )
                 }
 
-                // ---------- 点击涟漪（都落在有意义的位置） ----------
-                val ripples = listOf(
-                    Triple(0.315f, Offset(docX + docW * 0.45f, docY + 2f * (lineH + lineGap)), SWARM_COLORS[2]),
-                    Triple(0.635f, sendCenter, primary),
-                    Triple(0.665f, Offset(cx, cy - 6f * dpPx), SWARM_COLORS[4])
-                )
-                for ((startT, pos, col) in ripples) {
-                    val p = (t - startT) / 0.045f
-                    if (p in 0f..1f) {
-                        drawCircle(
-                            color = col.copy(alpha = (1f - p) * 0.75f),
-                            radius = (6f + p * 26f) * dpPx,
-                            center = pos,
-                            style = Stroke(width = 2f * dpPx)
-                        )
-                    }
+                // ---------- 发送键点击涟漪 ----------
+                val rp = (t - 0.75f) / 0.05f
+                if (rp in 0f..1f) {
+                    drawCircle(
+                        color = primary.copy(alpha = (1f - rp) * 0.75f),
+                        radius = (6f + rp * 26f) * dpPx,
+                        center = sendC,
+                        style = Stroke(width = 2f * dpPx)
+                    )
                 }
 
-                // ---------- 光标目标分配 ----------
-                val wanderX = cx + sin(timeSec * 0.9f) * 54f * dpPx
-                val wanderY = cy + cos(timeSec * 1.2f) * 40f * dpPx
-                val selPos = easeInOut((t - 0.20f) / 0.24f) * lineFrac.size
-                val selLine = floor(selPos).toInt().coerceAtMost(lineFrac.size - 1)
-                val selFrac = (selPos - floor(selPos)).coerceIn(0f, 1f)
-                val selCursorPos = Offset(
-                    docX + docW * lineFrac[selLine] * selFrac,
-                    docY + selLine * (lineH + lineGap) + lineH
+                // ---------- 光标分工 ----------
+                val focus: Offset = when {
+                    t < 0.25f -> avatarC
+                    t < 0.46f -> Offset(cx, greetY + greetFull.size.height / 2f)
+                    t < 0.58f -> Offset(cx, sub1Y + 10f * dpPx)
+                    t < 0.78f -> Offset(cx, cardTop + cardH / 2f)
+                    else -> Offset(cx, h * 0.45f)
+                }
+                val arcTip = Offset(
+                    avatarC.x + cos(Math.toRadians((-90f + 360f * traceP).toDouble())).toFloat() * avatarR,
+                    avatarC.y + sin(Math.toRadians((-90f + 360f * traceP).toDouble())).toFloat() * avatarR
                 )
-                val logoCornerPos = Offset(
-                    logoBoxX + logoBoxW * logoDragP,
-                    logoBoxY + logoBoxH * logoDragP
-                )
-                val ringP = easeInOut((t - 0.65f) / 0.13f)
-                val ringRadius = 122f * dpPx
-                val ringRotation = timeSec * 26f
+                val subSweep: Offset = if (t < 0.51f) {
+                    Offset(sub1X + sub1Layout.size.width * sub1P, sub1Y + sub1Layout.size.height + 4f * dpPx)
+                } else {
+                    Offset(sub2X + sub2Layout.size.width * sub2P, sub2Y + sub2Layout.size.height + 4f * dpPx)
+                }
+                val cardTrace: Offset = when {
+                    t < 0.65f -> Offset(
+                        cardX0 + (cardX1 - cardX0) * ((t - 0.57f) / 0.08f).coerceIn(0f, 1f),
+                        cardTop
+                    )
+                    t < 0.70f -> Offset(
+                        cardX1,
+                        cardTop + (sendC.y - cardTop) * ((t - 0.65f) / 0.05f).coerceIn(0f, 1f)
+                    )
+                    else -> sendC
+                }
 
                 for ((idx, c) in cursors.withIndex()) {
                     var steer = 0.055f
                     val target: Offset = when {
-                        t >= 0.85f -> {
-                            // 散开：沿远离中心方向飞出
+                        t >= 0.86f -> {
                             val dx = c.x - cx
-                            val dy = c.y - cy
+                            val dy = c.y - focus.y
                             val len = hypot(dx, dy).coerceAtLeast(1f)
                             Offset(c.x + dx / len * w * 0.8f, c.y + dy / len * h * 0.8f)
                         }
-                        ringP > 0f -> {
-                            val a = Math.toRadians((c.ringAngle + ringRotation).toDouble())
-                            val ringPos = Offset(
-                                cx + cos(a).toFloat() * ringRadius,
-                                cy + sin(a).toFloat() * ringRadius
-                            )
-                            val flockA = Math.toRadians((c.ringAngle + timeSec * 55f + c.seed).toDouble())
-                            val flockPos = Offset(
-                                wanderX + cos(flockA).toFloat() * c.orbitR * dpPx,
-                                wanderY + sin(flockA).toFloat() * c.orbitR * dpPx
-                            )
-                            Offset(
-                                flockPos.x + (ringPos.x - flockPos.x) * ringP,
-                                flockPos.y + (ringPos.y - flockPos.y) * ringP
-                            )
+                        idx == 0 && t in 0.04f..0.24f -> {
+                            steer = 0.20f
+                            arcTip
                         }
-                        idx == 0 && t in 0.20f..0.46f -> {
-                            steer = 0.14f
-                            selCursorPos
+                        idx == 1 && t in 0.24f..0.46f -> {
+                            steer = 0.20f
+                            penTip
                         }
-                        idx == 1 && t in 0.21f..0.46f -> {
-                            steer = 0.14f
-                            logoCornerPos
+                        idx == 2 && t in 0.44f..0.58f -> {
+                            steer = 0.18f
+                            subSweep
                         }
-                        idx == 2 && t in 0.44f..0.66f -> {
-                            steer = 0.16f
-                            Offset(caretX + 3f * dpPx, barY + barH * 0.58f)
-                        }
-                        idx == 3 && t in 0.60f..0.68f -> {
-                            steer = 0.16f
-                            sendCenter
+                        idx == 3 && t in 0.56f..0.79f -> {
+                            steer = 0.18f
+                            cardTrace
                         }
                         else -> {
                             val a = Math.toRadians((c.ringAngle + timeSec * 55f + c.seed).toDouble())
                             Offset(
-                                wanderX + cos(a).toFloat() * c.orbitR * dpPx,
-                                wanderY + sin(a).toFloat() * c.orbitR * dpPx
+                                focus.x + cos(a).toFloat() * c.orbitR * dpPx,
+                                focus.y + sin(a).toFloat() * c.orbitR * dpPx * 0.72f
                             )
                         }
                     }
@@ -495,38 +591,6 @@ fun SwarmLaunchAnimation(
             } catch (e: Exception) {
                 // 装饰动画绝不能拖垮 App：任何绘制异常都直接结束动画
                 runtime.failed = true
-            }
-        }
-
-        // 中央标志
-        if (logoAlpha > 0f) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .graphicsLayer(alpha = logoAlpha * overlayAlpha),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(58.dp)
-                        .clip(CircleShape)
-                        .background(colors.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "S",
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-                Spacer(modifier = Modifier.height(14.dp))
-                Text(
-                    text = "伴语",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary
-                )
             }
         }
     }
