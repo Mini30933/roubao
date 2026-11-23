@@ -46,6 +46,8 @@ import com.roubao.autopilot.data.ChatMessage
 import com.roubao.autopilot.data.ChatRepository
 import com.roubao.autopilot.data.ChatSession
 import com.roubao.autopilot.data.contextTokensFor
+import com.roubao.autopilot.ui.LaunchTargets
+import com.roubao.autopilot.ui.launchRect
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.vlm.VLMClient
 import kotlinx.coroutines.launch
@@ -61,6 +63,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -612,7 +615,8 @@ modifier = Modifier
 Row(
 modifier = Modifier
 .fillMaxWidth()
-.padding(horizontal = 8.dp, vertical = 6.dp),
+.padding(horizontal = 8.dp, vertical = 6.dp)
+.onGloballyPositioned { LaunchTargets.topBar = it.launchRect() },
 verticalAlignment = Alignment.CenterVertically
 ) {
 IconButton(onClick = { scope.launch { drawerState.open()}}) {
@@ -654,7 +658,8 @@ Box(
 modifier = Modifier
 .size(58.dp)
 .clip(CircleShape)
-.background(colors.primary),
+.background(colors.primary)
+.onGloballyPositioned { LaunchTargets.avatar = it.launchRect() },
 contentAlignment = Alignment.Center
 ) {
 Text(
@@ -667,6 +672,7 @@ color = Color.White
 Spacer(modifier = Modifier.height(16.dp))
 Text(
 text = "嗨！今天想聊些什么？",
+modifier = Modifier.onGloballyPositioned { LaunchTargets.greeting = it.launchRect() },
 fontSize = 20.sp,
 fontWeight = FontWeight.Medium,
 color = colors.textPrimary
@@ -674,11 +680,13 @@ color = colors.textPrimary
 Spacer(modifier = Modifier.height(8.dp))
 Text(
 text = "在「设置」里填好角色设定，我就是你要的那个角色",
+modifier = Modifier.onGloballyPositioned { LaunchTargets.sub1 = it.launchRect() },
 fontSize = 13.sp,
 color = colors.textHint
 )
 Text(
 text = "聊天中让我操作手机，我也会照做",
+modifier = Modifier.onGloballyPositioned { LaunchTargets.sub2 = it.launchRect() },
 fontSize = 13.sp,
 color = colors.textHint
 )
@@ -785,6 +793,7 @@ modifier = Modifier
 .padding(horizontal = 16.dp, vertical = 10.dp)
 .clip(RoundedCornerShape(24.dp))
 .background(colors.backgroundInput)
+.onGloballyPositioned { LaunchTargets.input = it.launchRect() }
 .padding(horizontal = 16.dp, vertical = 12.dp)
 ) {
 if (pendingImage != null) {
