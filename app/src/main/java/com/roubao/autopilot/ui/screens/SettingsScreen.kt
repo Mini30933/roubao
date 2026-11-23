@@ -92,7 +92,8 @@ fun SettingsScreen(
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
-    onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null
+    onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null,
+    onCheckUpdate: (() -> Unit)? = null
 ) {
     val colors = BaoziTheme.colors
     var showApiKeyDialog by remember { mutableStateOf(false) }
@@ -692,6 +693,15 @@ fun SettingsScreen(
                 title = "版本",
                 subtitle = BuildConfig.VERSION_NAME,
                 onClick = { }
+            )
+        }
+
+        item {
+            SettingsItem(
+                icon = Icons.Default.Star,
+                title = "检查更新",
+                subtitle = "从 GitHub 检查新版本，非强制更新",
+                onClick = { onCheckUpdate?.invoke() }
             )
         }
 

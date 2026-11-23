@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
@@ -40,6 +41,11 @@ import com.roubao.autopilot.vlm.GUIOwlClient
 import com.roubao.autopilot.vlm.MAIUIClient
 import com.roubao.autopilot.vlm.VLMClient
 import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.core.content.FileProvider
+import android.content.Intent
+import com.roubao.autopilot.data.UpdateChecker
+import com.roubao.autopilot.data.UpdateInfo
 import kotlinx.coroutines.launch
 import rikka.shizuku.Shizuku
 import android.util.Log
@@ -201,6 +207,76 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // 应用更新（GitHub Releases）：每次冷启动静默检查一次，非强制，覆盖安装保数据
+        val updateContext = LocalContext.current
+        var pendingUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+        var updateDownloading by remember { mutableStateOf(false) }
+        var updateProgress by remember { mutableStateOf(0) }
+        val updateScope = rememberCoroutineScope()
+
+        fun startUpdateDownload(info: UpdateInfo) {
+            if (!updateContext.packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(updateContext, "请先允许伴语安装应用，开启后回来点「立即更新」", Toast.LENGTH_LONG).show()
+                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + updateContext.packageName))
+                updateContext.startActivity(intent)
+                return
+            }
+            updateDownloading = true
+            updateProgress = 0
+            updateScope.launch {
+                val file = UpdateChecker.downloadApk(updateContext, info) { updateProgress = it }
+                updateDownloading = false
+                if (file != null) {
+                    pendingUpdate = null
+                    val uri = FileProvider.getUriForFile(updateContext, updateContext.packageName + ".fileprovider", file)
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/vnd.android.package-archive")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    updateContext.startActivity(intent)
+                } else {
+                    Toast.makeText(updateContext, "下载失败，请检查网络后重试", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        LaunchedEffect(Unit) {
+            pendingUpdate = UpdateChecker.check()
+        }
+
+        pendingUpdate?.let { info ->
+            AlertDialog(
+                onDismissRequest = { if (!updateDownloading) pendingUpdate = null },
+                containerColor = colors.backgroundCard,
+                title = { Text("发现新版本 ${info.versionName}", color = colors.textPrimary) },
+                text = {
+                    Column {
+                        if (updateDownloading) {
+                            Text("正在下载更新… $updateProgress%", color = colors.textSecondary, fontSize = 14.sp)
+                            Spacer(Modifier.height(12.dp))
+                            LinearProgressIndicator(progress = updateProgress / 100f, modifier = Modifier.fillMaxWidth())
+                        } else {
+                            Text(
+                                (info.notes.ifBlank { "有新版本可用。" }) + "\n\n更新是覆盖安装，聊天记录和设置都会保留。",
+                                color = colors.textSecondary, fontSize = 14.sp
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(enabled = !updateDownloading, onClick = { startUpdateDownload(info) }) {
+                        Text(if (updateDownloading) "下载中…" else "立即更新", color = colors.primary)
+                    }
+                },
+                dismissButton = {
+                    TextButton(enabled = !updateDownloading, onClick = { pendingUpdate = null }) {
+                        Text("以后再说", color = colors.textSecondary)
+                    }
+                }
+            )
+        }
+
         Scaffold(
             modifier = Modifier.background(colors.background),
             containerColor = colors.background,
@@ -330,6 +406,16 @@ class MainActivity : ComponentActivity() {
                                                 .onSuccess { settingsManager.updateModelContexts(it) }
                                         }.onFailure { error ->
                                             onError(error.message ?: "未知错误")
+                                        }
+                                    }
+                                },
+                                onCheckUpdate = {
+                                    lifecycleScope.launch {
+                                        val info = UpdateChecker.check()
+                                        if (info != null) {
+                                            pendingUpdate = info
+                                        } else {
+                                            Toast.makeText(this@MainActivity, "已是最新版本", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 }
