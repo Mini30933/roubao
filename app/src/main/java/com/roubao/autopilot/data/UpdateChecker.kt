@@ -17,7 +17,8 @@ data class UpdateInfo(
     val versionName: String,
     val notes: String,
     val apkUrl: String,
-    val apkSize: Long
+    val apkSize: Long,
+    val force: Boolean = false  // true = 强制更新，弹窗关不掉
 )
 
 /**
@@ -50,7 +51,8 @@ object UpdateChecker {
                     versionName = json.optString("versionName", ""),
                     notes = json.optString("notes", ""),
                     apkUrl = apkUrl,
-                    apkSize = json.optLong("apkSize", 0)
+                    apkSize = json.optLong("apkSize", 0),
+                    force = json.optBoolean("force", false)
                 )
             }
         } catch (e: Exception) {

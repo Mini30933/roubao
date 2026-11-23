@@ -247,7 +247,7 @@ class MainActivity : ComponentActivity() {
 
         pendingUpdate?.let { info ->
             AlertDialog(
-                onDismissRequest = { if (!updateDownloading) pendingUpdate = null },
+                onDismissRequest = { if (!updateDownloading && !info.force) pendingUpdate = null },
                 containerColor = colors.backgroundCard,
                 title = { Text("发现新版本 ${info.versionName}", color = colors.textPrimary) },
                 text = {
@@ -258,7 +258,9 @@ class MainActivity : ComponentActivity() {
                             LinearProgressIndicator(progress = updateProgress / 100f, modifier = Modifier.fillMaxWidth())
                         } else {
                             Text(
-                                (info.notes.ifBlank { "有新版本可用。" }) + "\n\n更新是覆盖安装，聊天记录和设置都会保留。",
+                                (info.notes.ifBlank { "有新版本可用。" }) +
+                                    if (info.force) "\n\n这是一次重要更新，需要更新后才能继续使用。更新是覆盖安装，聊天记录和设置都会保留。"
+                                    else "\n\n更新是覆盖安装，聊天记录和设置都会保留。",
                                 color = colors.textSecondary, fontSize = 14.sp
                             )
                         }
@@ -270,8 +272,10 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 dismissButton = {
-                    TextButton(enabled = !updateDownloading, onClick = { pendingUpdate = null }) {
-                        Text("以后再说", color = colors.textSecondary)
+                    if (!info.force) {
+                        TextButton(enabled = !updateDownloading, onClick = { pendingUpdate = null }) {
+                            Text("以后再说", color = colors.textSecondary)
+                        }
                     }
                 }
             )
