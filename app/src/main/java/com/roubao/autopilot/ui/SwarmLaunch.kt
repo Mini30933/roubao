@@ -219,7 +219,7 @@ fun SwarmLaunchAnimation(
                 break
             }
             // 主页元素迟迟没出现（不在空状态主页）：2.6 秒就收尾，不让用户干等
-            if (el > 2600L && LaunchTargets.avatar == null) {
+            if (el > 2600L && LaunchTargets.greeting == null) {
                 break
             }
         }
@@ -248,7 +248,7 @@ fun SwarmLaunchAnimation(
                     val origin = LaunchTargets.rootOffset
                     fun Rect?.loc(): Rect? = this?.translate(-origin.x, -origin.y)
                     val avatar = LaunchTargets.avatar.loc()
-                    if (avatar == null) {
+                    if (LaunchTargets.greeting.loc() == null) {
                         // 元素还没布局好先全盖；等太久就整体淡出
                         val maskAlpha = if (elapsed < 1650L) {
                             1f
@@ -265,7 +265,7 @@ fun SwarmLaunchAnimation(
 
                         // 头像：圆洞由小长大，边缘带柔边
                         val pA = easeOut(seg(t, 0.06f, 0.22f))
-                        if (pA > 0f) {
+                        if (avatar != null && pA > 0f) {
                             val rFull = avatar.width / 2f + 9f * dpPx
                             val r = rFull * pA
                             val f = 5f * dpPx
@@ -333,8 +333,9 @@ fun SwarmLaunchAnimation(
             try {
                 val origin = LaunchTargets.rootOffset
                 fun Rect?.loc(): Rect? = this?.translate(-origin.x, -origin.y)
-                val avatar = LaunchTargets.avatar.loc() ?: return@Canvas
+                val avatar = LaunchTargets.avatar.loc()
                 val greet = LaunchTargets.greeting.loc()
+                if (greet == null) return@Canvas
                 val s1 = LaunchTargets.sub1.loc()
                 val s2 = LaunchTargets.sub2.loc()
                 val input = LaunchTargets.input.loc()
@@ -344,8 +345,8 @@ fun SwarmLaunchAnimation(
                     else -> (1f - (t - 0.90f) / 0.10f).coerceIn(0f, 1f)
                 }
 
-                val aCircleR = avatar.width / 2f + 9f * dpPx
-                val circleTop = Offset(avatar.center.x, avatar.center.y - aCircleR)
+                val aCircleR = (avatar?.width ?: 0f) / 2f + 9f * dpPx
+                val circleTop = avatar?.let { Offset(it.center.x, it.center.y - aCircleR) } ?: Offset.Zero
                 val pTrace = easeInOut(seg(t, 0.06f, 0.22f))
 
                 // 发送键位置与涟漪（D 在 0.80 点下）
@@ -368,12 +369,12 @@ fun SwarmLaunchAnimation(
                     val s1Start = s1?.let { Offset(it.left - 6f * dpPx, it.center.y + 11f * dpPx) }
                     val s1End = s1?.let { Offset(it.right + 6f * dpPx, it.center.y + 11f * dpPx) }
                     when {
-                        t < 0.06f -> {
+                        t < 0.06f && avatar != null -> {
                             val from = Offset(avatar.center.x - 150f * dpPx, avatar.center.y - 130f * dpPx)
                             pos = travel(t, 0f, 0.06f, from, circleTop)
                             alpha = actorAlpha(t, 0f, 0.05f, 2f, 2.1f)
                         }
-                        t < 0.22f -> {
+                        t < 0.22f && avatar != null -> {
                             val ang = Math.toRadians((-90f - 180f * pTrace).toDouble())
                             pos = Offset(
                                 avatar.center.x + cos(ang).toFloat() * aCircleR,
@@ -383,9 +384,9 @@ fun SwarmLaunchAnimation(
                         }
                         t < 0.36f -> {
                             if (s1Start != null) {
-                                val bottom = Offset(avatar.center.x, avatar.center.y + aCircleR)
+                                val bottom = avatar?.let { Offset(it.center.x, it.center.y + aCircleR) } ?: Offset(s1Start.x, s1Start.y - 90f * dpPx)
                                 pos = travel(t, 0.22f, 0.36f, bottom, s1Start)
-                                alpha = 1f
+                                alpha = if (avatar != null) 1f else easeInOut(seg(t, 0.16f, 0.30f))
                             }
                         }
                         t < 0.48f -> {
@@ -414,13 +415,13 @@ fun SwarmLaunchAnimation(
                     val s2Start = s2?.let { Offset(it.left - 6f * dpPx, it.center.y + 11f * dpPx) }
                     val s2End = s2?.let { Offset(it.right + 6f * dpPx, it.center.y + 11f * dpPx) }
                     when {
-                        t < 0.06f -> {
+                        t < 0.06f && avatar != null -> {
                             val from = Offset(avatar.center.x + 150f * dpPx, avatar.center.y - 130f * dpPx)
                             val to = Offset(circleTop.x + 5f * dpPx, circleTop.y)
                             pos = travel(t, 0f, 0.06f, from, to)
                             alpha = actorAlpha(t, 0f, 0.05f, 2f, 2.1f)
                         }
-                        t < 0.22f -> {
+                        t < 0.22f && avatar != null -> {
                             val ang = Math.toRadians((-90f + 180f * pTrace).toDouble())
                             pos = Offset(
                                 avatar.center.x + cos(ang).toFloat() * aCircleR,
@@ -430,9 +431,9 @@ fun SwarmLaunchAnimation(
                         }
                         t < 0.46f -> {
                             if (s2Start != null) {
-                                val bottom = Offset(avatar.center.x, avatar.center.y + aCircleR)
+                                val bottom = avatar?.let { Offset(it.center.x, it.center.y + aCircleR) } ?: Offset(s2Start.x, s2Start.y - 90f * dpPx)
                                 pos = travel(t, 0.22f, 0.46f, bottom, s2Start)
-                                alpha = 1f
+                                alpha = if (avatar != null) 1f else easeInOut(seg(t, 0.16f, 0.30f))
                             }
                         }
                         t < 0.58f -> {

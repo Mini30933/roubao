@@ -654,22 +654,6 @@ modifier = Modifier
 contentAlignment = Alignment.Center
 ) {
 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-Box(
-modifier = Modifier
-.size(58.dp)
-.clip(CircleShape)
-.background(colors.primary)
-.onGloballyPositioned { LaunchTargets.avatar = it.launchRect() },
-contentAlignment = Alignment.Center
-) {
-Text(
-text = "S",
-fontSize = 30.sp,
-fontWeight = FontWeight.Bold,
-color = Color.White
-)
-}
-Spacer(modifier = Modifier.height(16.dp))
 Text(
 text = "嗨！今天想聊些什么？",
 modifier = Modifier.onGloballyPositioned { LaunchTargets.greeting = it.launchRect() },
